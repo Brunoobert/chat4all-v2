@@ -1,0 +1,75 @@
+
+services:
+  # 1. Zookeeper - Necessário para o Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181" # Porta padrão do Zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+
+  # 2. Kafka - Broker de mensageria
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"   # Listener interno (para outros containers Docker)
+      - "29092:29092" # Listener externo (para sua aplicação rodando no localhost)
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Define como o Kafka pode ser acessado de dentro e de fora do Docker
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # 3. Cassandra - Message Store DB
+  cassandra:
+    image: cassandra:latest
+    container_name: cassandra
+    ports:
+      - "9042:9042" # Porta padrão do Cassandra (CQL)
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      # Verifica se o cqlsh (shell do Cassandra) consegue conectar
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # 4. CockroachDB - Metadata DB
+  cockroachdb:
+    image: cockroachdb/cockroach:latest
+    container_name: cockroachdb
+    # Inicia um cluster de nó único sem segurança (ideal para dev local)
+    command: start-single-node --insecure
+    ports:
+      - "26257:26257" # Porta padrão do CockroachDB (SQL)
+      - "8080:8080"   # Porta da Admin UI
+    volumes:
+      - cockroachdb_data:/cockroach/cockroach-data
+    healthcheck:
+      # Verifica se a UI de saúde está respondendo
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health?ready=1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Definição dos volumes para persistir os dados
+volumes:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
+  cassandra_data:
+  cockroachdb_data:

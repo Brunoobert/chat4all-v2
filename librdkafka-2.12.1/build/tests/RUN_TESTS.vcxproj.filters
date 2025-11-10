@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Projetos\Chat4All\librdkafka-2.12.1\build\CMakeFiles\094803bfd524397b54728d30363aca58\RUN_TESTS_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{6C40D2E8-CA72-3792-9CE4-C4B1B7AC71A4}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
