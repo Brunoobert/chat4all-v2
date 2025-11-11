@@ -1,17 +1,19 @@
 import json
 import logging
 import uuid
+import os
 import time # Usado para os 'retries' de conexão
 from kafka import KafkaConsumer
 from cassandra.cluster import Cluster, Session
 from cassandra.query import PreparedStatement
 
 # --- Configurações ---
-KAFKA_TOPIC = "chat_messages"
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "chat_messages")
 # Usamos a porta EXTERNA 29092, pois este script roda no seu PC (localhost)
-KAFKA_BROKER = "localhost:29092" 
-CASSANDRA_HOSTS = ['localhost'] # Porta padrão 9042
-CASSANDRA_KEYSPACE = "chat4all_ks"
+KAFKA_BROKER = os.getenv("KAFKA_BROKER_URL", "localhost:29092")
+CASSANDRA_HOSTS_ENV = os.getenv("CASSANDRA_HOSTS", "localhost")
+CASSANDRA_HOSTS = CASSANDRA_HOSTS_ENV.split(',')
+CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "chat4all_ks")
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO,
