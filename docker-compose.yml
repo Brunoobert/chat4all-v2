@@ -12,6 +12,8 @@ services:
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
+    networks:
+      - chat4all_net
 
   # 2. Kafka - Broker de mensageria
   kafka:
@@ -32,6 +34,8 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     volumes:
       - kafka_data:/var/lib/kafka/data
+    networks:
+      - chat4all_net
 
   # 3. Cassandra - Message Store DB
   cassandra:
@@ -47,6 +51,8 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+    networks:
+      - chat4all_net
 
   # 4. CockroachDB - Metadata DB
   cockroachdb:
@@ -65,6 +71,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - chat4all_net
+
+  #.5 Frontend-service
+  frontend_service:
+    build:
+      context: ./frontend_service  # Caminho para a pasta com o Dockerfile
+    container_name: frontend_service_c
+    ports:
+      - "8000:8000"  # Expõe a porta 8000 do contêiner para a porta 8000 do seu PC
+    depends_on:
+      - kafka        # Garante que o Kafka suba antes da API
+    networks:
+      - chat4all_net # IMPORTANTE: Coloque na mesma rede dos outros serviços
+    environment:
+
+      - KAFKA_BOOTSTRAP_SERVER=kafka:9092
+
+
 
 # Definição dos volumes para persistir os dados
 volumes:
@@ -73,3 +98,7 @@ volumes:
   kafka_data:
   cassandra_data:
   cockroachdb_data:
+
+networks:
+  chat4all_net:
+    driver: bridge
