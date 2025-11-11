@@ -89,7 +89,24 @@ services:
 
       - KAFKA_BOOTSTRAP_SERVER=kafka:9092
 
-
+  # -----------------------------------------------
+  # 6. ROUTER WORKER (CONSUMIDOR) <--- NOVO SERVIÇO
+  # -----------------------------------------------
+  router_worker:
+    build:
+      context: ./services/router_worker # 1. Aponta para a pasta do worker
+    container_name: router_worker_c
+    depends_on:
+      - kafka         # 2. Só inicia depois do Kafka
+      - cassandra     # 3. Só inicia depois do Cassandra
+    environment:
+      # 4. Injeta as variáveis de ambiente que o worker.py precisa
+      - KAFKA_BROKER_URL=kafka:9092   # Conexão INTERNA com o Kafka
+      - CASSANDRA_HOSTS=cassandra     # Conexão INTERNA com o Cassandra
+      - CASSANDRA_KEYSPACE=chat4all_ks
+      - KAFKA_TOPIC=chat_messages
+    networks:
+      - chat4all_net # 5. Coloca na mesma rede de todos os outros
 
 # Definição dos volumes para persistir os dados
 volumes:
