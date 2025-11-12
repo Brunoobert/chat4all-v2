@@ -108,6 +108,24 @@ services:
     networks:
       - chat4all_net # 5. Coloca na mesma rede de todos os outros
 
+  # -----------------------------------------------
+  # 7. METADATA SERVICE (NOVO)
+  # -----------------------------------------------
+  metadata_service:
+    build:
+      context: ./services/metadata_service
+    container_name: metadata_service_c
+    ports:
+      - "8001:8001"  # Expõe na porta 8001 (diferente da API de mensagens 8000)
+    depends_on:
+      - cockroachdb  # Só inicia depois do banco
+    environment:
+      # AQUI ESTÁ O SEGREDO:
+      # Mudamos de 'localhost' para 'cockroachdb' (nome do serviço)
+      - DATABASE_URL=cockroachdb://root@cockroachdb:26257/defaultdb?sslmode=disable
+    networks:
+      - chat4all_net
+
 # Definição dos volumes para persistir os dados
 volumes:
   zookeeper_data:

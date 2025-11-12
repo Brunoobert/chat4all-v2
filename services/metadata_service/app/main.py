@@ -8,6 +8,8 @@ import uuid
 from . import models, schemas
 from .database import SessionLocal, engine, get_db
 
+from .security import get_password_hash
+
 # 1. Isto diz ao SQLAlchemy para criar todas as tabelas
 #    que definimos em models.py (neste caso, a tabela 'users')
 #    Isto é ótimo para desenvolvimento, mas para produção
@@ -56,7 +58,7 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     new_user = models.User(
         username=user.username,
         email=user.email,
-        hashed_password=user.password # <--- SIMPLESMENTE PARA TESTAR
+        hashed_password=get_password_hash(user.password)
     )
     
     db.add(new_user)  # Adiciona à sessão
