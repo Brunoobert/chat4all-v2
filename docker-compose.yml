@@ -82,7 +82,10 @@ services:
     ports:
       - "8000:8000"  # Expõe a porta 8000 do contêiner para a porta 8000 do seu PC
     depends_on:
-      - kafka        # Garante que o Kafka suba antes da API
+      kafka:
+        condition: service_started # <-- Novo (bom para o Kafka)
+      cassandra:
+        condition: service_healthy        # Garante que o Kafka suba antes da API
     networks:
       - chat4all_net # IMPORTANTE: Coloque na mesma rede dos outros serviços
     environment:
@@ -118,7 +121,8 @@ services:
     ports:
       - "8001:8001"  # Expõe na porta 8001 (diferente da API de mensagens 8000)
     depends_on:
-      - cockroachdb  # Só inicia depois do banco
+      cockroachdb:
+        condition: service_healthy  # Só inicia depois do banco
     environment:
       # AQUI ESTÁ O SEGREDO:
       # Mudamos de 'localhost' para 'cockroachdb' (nome do serviço)

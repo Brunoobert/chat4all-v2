@@ -59,14 +59,11 @@ def main():
     # Prepara a query de INSERT (muito mais eficiente)
     # Prepara a query de INSERT (muito mais eficiente)
     insert_query: PreparedStatement = session.prepare(
-        """
-        INSERT INTO messages (conversation_id, message_id, sender_id, content, created_at)
-        VALUES (?, ?, ?, ?, toTimestamp(now())) 
-        """
-        # AQUI ESTÁ A CORREÇÃO:
-        # Removemos o 'uuid(...)' e 'timeuuid(...)' e deixamos apenas os '?'
-        # O driver do Python cuidará da conversão dos tipos.
-    )
+    """
+    INSERT INTO messages (conversation_id, message_id, sender_id, content, created_at, status)
+    VALUES (?, ?, ?, ?, toTimestamp(now()), ?) 
+    """
+)
 
     logger.info("--- Router Worker iniciado e ouvindo mensagens ---")
     try:
@@ -77,18 +74,24 @@ def main():
             logger.info(f"Mensagem recebida: {data.get('message_id')}")
 
             try:
-                # Execute o INSERT
-                # ⚠️ ATENÇÃO AQUI ⚠️
+                
+                logger.info(f"[AUDIT] Mensagem recebida: {data.get('message_id')}, Status: {data.get('status')}")
+
+                current_status = data.get('status', 'UNKNOWN')
+                if current_status == "SENT":
+                    data['status'] = "DELIVERED"
+
                 session.execute(
                     insert_query,
                     [
                         uuid.UUID(data.get('chat_id')),    # <-- CONVERTE PARA UUID
                         uuid.UUID(data.get('message_id')), # <-- CONVERTE PARA UUID
                         data.get('sender_id'),
-                        data.get('content')
+                        data.get('content'),
+                        data.get('status')
                     ]
                 )
-                logger.info(f"Mensagem {data.get('message_id')} salva no Cassandra.")
+                logger.info(f"Mensagem {data.get('message_id')} salva no Cassandra. Novo Status: {data['status']}")
 
             except Exception as e:
                 logger.error(f"Erro ao salvar no Cassandra: {e}. Mensagem: {data}")
