@@ -12,6 +12,7 @@ from typing import List
 from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File
 from contextlib import asynccontextmanager
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 
 # Seus schemas e lógica interna
 from app.schemas import User, Token, MessageIn, MessageResponse
@@ -70,6 +71,12 @@ async def health_check():
 @app.post("/token", response_model=Token, tags=["Autenticação"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = get_user(form_data.username)
+    
+    # (Mantive seus prints de debug se quiser)
+    print(f"Tentativa de Login: {form_data.username}")
+    if not user:
+        print("ERRO: Usuário não encontrado no db.py")
+    
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -120,8 +127,9 @@ async def post_message(message_in: MessageIn, current_user: User = Depends(get_c
     
     message_id = uuid.uuid4()
     
-    # Horário Brasília (UTC-3) forçado visualmente para o Cassandra
-    horario_brasilia = (datetime.utcnow() - timedelta(hours=3)).isoformat()
+    # Horário (Se você configurou TZ no docker-compose, use .now(). Se não, use a lógica UTC-3)
+    # Assumindo que você configurou o TZ=America/Sao_Paulo:
+    timestamp_utc = (datetime.utcnow() - timedelta(hours=3)).isoformat()
 
     # Lógica de Tipo
     msg_type = "chat_message"
@@ -133,7 +141,7 @@ async def post_message(message_in: MessageIn, current_user: User = Depends(get_c
     kafka_payload.update({
         "sender_id": current_user.username,
         "message_id": str(message_id),
-        "timestamp_utc": horario_brasilia,
+        "timestamp_utc": timestamp_utc,
         "type": msg_type,
         "status": "SENT"
     })
@@ -163,3 +171,28 @@ def get_conversation_history(conversation_id: uuid.UUID, current_user: User = De
     except Exception as e:
         logger.error(f"Erro Cassandra: {e}")
         raise HTTPException(status_code=500, detail="Erro ao ler histórico.")
+
+# --- ROTA DE CALLBACK (WEBHOOK) ---
+class StatusUpdate(BaseModel):
+    status: str
+    conversation_id: uuid.UUID
+
+@app.patch("/v1/messages/{message_id}/status", tags=["Messages"])
+def update_message_status(message_id: uuid.UUID, update: StatusUpdate):
+    if cassandra_session is None:
+        raise HTTPException(status_code=503, detail="Banco indisponível.")
+    
+    logger.info(f"Atualizando status {message_id} para {update.status}")
+    
+    query = """
+        UPDATE messages 
+        SET status = %s 
+        WHERE conversation_id = %s AND message_id = %s
+    """
+    
+    try:
+        cassandra_session.execute(query, (update.status, update.conversation_id, message_id))
+        return {"msg": "Status atualizado"}
+    except Exception as e:
+        logger.error(f"Erro no update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

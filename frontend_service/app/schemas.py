@@ -4,9 +4,10 @@ from typing import Optional
 
 # Schema para validar o corpo (JSON) da requisição POST
 class MessageIn(BaseModel):
-    chat_id: uuid.UUID
-    content: Optional[str] = None # O texto agora é opcional (pode ser só a foto)
-    file_id: Optional[str] = None # Novo campo para o ID do arquivo
+    sender_id: str
+    chat_id: str
+    content: Optional[str] = None
+    file_id: Optional[str] = None
 
 # Schema para a resposta da nossa API
 class MessageResponse(BaseModel):

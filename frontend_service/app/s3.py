@@ -8,7 +8,7 @@ import os
 MINIO_INTERNAL_URL = os.getenv("MINIO_URL", "http://minio:9000")
 
 # URL EXTERNA (Para o seu navegador baixar o arquivo)
-# Se estiver rodando localmente, é localhost. Em produção, seria seu dominio.com
+# Se estiver rodando localmente, é localhost.
 MINIO_EXTERNAL_URL = "http://localhost:9000" 
 
 ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minioadmin")
@@ -32,7 +32,7 @@ def get_s3_client_external():
     """Cliente configurado APENAS para gerar links para quem está fora (Download)"""
     return boto3.client(
         's3',
-        endpoint_url=MINIO_EXTERNAL_URL, # <-- AQUI ESTÁ O SEGREDO
+        endpoint_url=MINIO_EXTERNAL_URL,
         aws_access_key_id=ACCESS_KEY,
         aws_secret_access_key=SECRET_KEY,
         config=boto3.session.Config(signature_version='s3v4'),
@@ -43,7 +43,6 @@ def create_presigned_url(object_name: str, expiration=3600):
     """
     Gera uma URL temporária para download usando o host EXTERNO.
     """
-    # Usamos o cliente externo para que a assinatura bata com 'localhost'
     s3_client = get_s3_client_external()
     try:
         response = s3_client.generate_presigned_url(
@@ -54,7 +53,6 @@ def create_presigned_url(object_name: str, expiration=3600):
             },
             ExpiresIn=expiration
         )
-        # Não precisamos mais fazer .replace(), a URL já nasce certa!
         return response
             
     except ClientError as e:
@@ -65,7 +63,6 @@ def upload_file_to_minio(file_obj, object_name: str, content_type: str):
     """
     Envia um arquivo usando a rede INTERNA do Docker.
     """
-    # Usamos o cliente interno para conectar no 'minio:9000'
     s3_client = get_s3_client_internal()
     try:
         s3_client.upload_fileobj(
