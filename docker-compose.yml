@@ -86,11 +86,16 @@ services:
         condition: service_started # <-- Novo (bom para o Kafka)
       cassandra:
         condition: service_healthy        # Garante que o Kafka suba antes da API
+      minio: # <--- ADICIONE ESTA DEPENDÊNCIA
+        condition: service_healthy
     networks:
       - chat4all_net # IMPORTANTE: Coloque na mesma rede dos outros serviços
     environment:
-
+      - MINIO_URL=http://minio:9000
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
       - KAFKA_BOOTSTRAP_SERVER=kafka:9092
+      - CASSANDRA_HOSTS=cassandra
 
   # -----------------------------------------------
   # 6. ROUTER WORKER (CONSUMIDOR) <--- NOVO SERVIÇO
@@ -130,6 +135,42 @@ services:
     networks:
       - chat4all_net
 
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000" # Porta da API (usada pelo código Python)
+      - "9001:9001" # Porta do Painel Visual (Console no navegador)
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - chat4all_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Serviço temporário para criar o bucket automaticamente
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - chat4all_net
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/chat-files;
+      /usr/bin/mc anonymous set public myminio/chat-files;
+      exit 0;
+      "
+
 # Definição dos volumes para persistir os dados
 volumes:
   zookeeper_data:
@@ -137,6 +178,7 @@ volumes:
   kafka_data:
   cassandra_data:
   cockroachdb_data:
+  minio_data:
 
 networks:
   chat4all_net:
