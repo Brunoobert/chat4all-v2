@@ -1,107 +1,109 @@
 import json
 import logging
-import uuid
 import os
-import time # Usado para os 'retries' de conexão
-from kafka import KafkaConsumer
-from cassandra.cluster import Cluster, Session
-from cassandra.query import PreparedStatement
+import uuid
+from datetime import datetime
+from kafka import KafkaConsumer, KafkaProducer
+from cassandra.cluster import Cluster
 
-# --- Configurações ---
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "chat_messages")
-# Usamos a porta EXTERNA 29092, pois este script roda no seu PC (localhost)
-KAFKA_BROKER = os.getenv("KAFKA_BROKER_URL", "localhost:29092")
-CASSANDRA_HOSTS_ENV = os.getenv("CASSANDRA_HOSTS", "localhost")
-CASSANDRA_HOSTS = CASSANDRA_HOSTS_ENV.split(',')
-CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "chat4all_ks")
-
-# Configuração de logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - [WORKER] - %(levelname)s - %(message)s')
+# Configuração de Logs
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - [WORKER] - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def connect_to_cassandra() -> Session:
-    """Tenta conectar ao Cassandra até ter sucesso."""
-    logger.info("Tentando conectar ao Cassandra em %s...", CASSANDRA_HOSTS)
-    while True:
-        try:
-            cluster = Cluster(CASSANDRA_HOSTS)
-            session = cluster.connect(CASSANDRA_KEYSPACE)
-            logger.info("Conectado ao Cassandra com sucesso!")
-            return session
-        except Exception as e:
-            logger.warning("Falha ao conectar ao Cassandra: %s. Tentando novamente em 5s...", e)
-            time.sleep(5)
+# Configurações
+KAFKA_TOPIC_IN = os.getenv("KAFKA_TOPIC", "chat_messages")
+KAFKA_BROKER = os.getenv("KAFKA_BROKER_URL", "kafka:9092")
+CASSANDRA_HOSTS = os.getenv("CASSANDRA_HOSTS", "cassandra").split(',')
+CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "chat4all_ks")
 
-def connect_to_kafka() -> KafkaConsumer:
-    """Tenta conectar ao Kafka como consumidor até ter sucesso."""
-    logger.info("Tentando conectar ao Kafka em %s...", KAFKA_BROKER)
-    while True:
-        try:
-            consumer = KafkaConsumer(
-                KAFKA_TOPIC,
-                bootstrap_servers=KAFKA_BROKER,
-                # Garante que o consumidor comece do início se for novo
-                auto_offset_reset='earliest', 
-                # Deserializa o JSON que a API enviou
-                value_deserializer=lambda v: json.loads(v.decode('utf-8'))
-            )
-            logger.info("Conectado ao Kafka (tópico: %s) com sucesso!", KAFKA_TOPIC)
-            return consumer
-        except Exception as e:
-            logger.warning("Falha ao conectar ao Kafka: %s. Tentando novamente em 5s...", e)
-            time.sleep(5)
+# Tópicos de Saída
+TOPIC_WHATSAPP = "whatsapp_outbound"
+TOPIC_INSTAGRAM = "instagram_outbound"
 
-def main():
-    session = connect_to_cassandra()
-    consumer = connect_to_kafka()
+def get_cassandra_session():
+    cluster = Cluster(CASSANDRA_HOSTS)
+    session = cluster.connect()
+    session.set_keyspace(CASSANDRA_KEYSPACE)
+    return session
 
-    # Prepara a query de INSERT (muito mais eficiente)
-    # Prepara a query de INSERT (muito mais eficiente)
-    insert_query: PreparedStatement = session.prepare(
-    """
-    INSERT INTO messages (conversation_id, message_id, sender_id, content, created_at, status)
-    VALUES (?, ?, ?, ?, toTimestamp(now()), ?) 
-    """
-)
-
-    logger.info("--- Router Worker iniciado e ouvindo mensagens ---")
+def process_messages():
     try:
-        # Loop infinito que "trava" o script, esperando mensagens
+        session = get_cassandra_session()
+        
+        insert_stmt = session.prepare("""
+            INSERT INTO messages 
+            (conversation_id, created_at, message_id, sender_id, content, status, type, file_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+
+        consumer = KafkaConsumer(
+            KAFKA_TOPIC_IN,
+            bootstrap_servers=KAFKA_BROKER,
+            auto_offset_reset='earliest',
+            value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+        )
+
+        producer = KafkaProducer(
+            bootstrap_servers=KAFKA_BROKER,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+
+        logger.info("Worker iniciado. Roteando mensagens...")
+
         for message in consumer:
-            # message.value já é um dicionário Python graças ao value_deserializer
             data = message.value
-            logger.info(f"Mensagem recebida: {data.get('message_id')}")
+            data['status'] = 'DELIVERED' 
+            msg_type = data.get('type', 'chat_message')
+            file_id = data.get('file_id')
 
             try:
+                # 1. Salva no Cassandra
+                conv_id = uuid.UUID(data['chat_id'])
+                msg_id = uuid.UUID(data['message_id'])
                 
-                logger.info(f"[AUDIT] Mensagem recebida: {data.get('message_id')}, Status: {data.get('status')}")
+                ts_str = data.get('timestamp_utc')
+                if ts_str:
+                    ts = datetime.fromisoformat(ts_str)
+                else:
+                    ts = datetime.now()
 
-                current_status = data.get('status', 'UNKNOWN')
-                if current_status == "SENT":
-                    data['status'] = "DELIVERED"
+                session.execute(insert_stmt, (
+                    conv_id, ts, msg_id, data['sender_id'], 
+                    data.get('content'), data['status'], msg_type, file_id
+                ))
+                
+                logger.info(f"Salvo no DB: {data['message_id']}")
 
-                session.execute(
-                    insert_query,
-                    [
-                        uuid.UUID(data.get('chat_id')),    # <-- CONVERTE PARA UUID
-                        uuid.UUID(data.get('message_id')), # <-- CONVERTE PARA UUID
-                        data.get('sender_id'),
-                        data.get('content'),
-                        data.get('status')
-                    ]
-                )
-                logger.info(f"Mensagem {data.get('message_id')} salva no Cassandra. Novo Status: {data['status']}")
+                # 2. Roteamento Inteligente
+                content_text = data.get('content', '')
+                
+                if content_text and content_text.startswith('@'):
+                    # --- CORREÇÃO AQUI: Adicionado chat_id ---
+                    routing_payload = {
+                        "destination": "usuario_insta",
+                        "content": content_text,
+                        "original_msg_id": data['message_id'],
+                        "chat_id": data['chat_id'] # <--- FALTAVA ISTO!
+                    }
+                    producer.send(TOPIC_INSTAGRAM, routing_payload)
+                    logger.info(f"Roteado para INSTAGRAM: {data['message_id']}")
+                
+                else:
+                    # WhatsApp
+                    routing_payload = {
+                        "destination": "+556299999999", 
+                        "content": content_text or f"[Arquivo: {file_id}]",
+                        "original_msg_id": data['message_id'],
+                        "chat_id": data['chat_id']
+                    }
+                    producer.send(TOPIC_WHATSAPP, routing_payload)
+                    logger.info(f"Roteado para WHATSAPP: {data['message_id']}")
 
             except Exception as e:
-                logger.error(f"Erro ao salvar no Cassandra: {e}. Mensagem: {data}")
+                logger.error(f"Erro processando mensagem: {e}")
 
-    except KeyboardInterrupt:
-        logger.info("Encerrando o worker (Ctrl+C)...")
-    finally:
-        consumer.close()
-        session.cluster.shutdown()
-        logger.info("Worker encerrado.")
+    except Exception as e:
+        logger.critical(f"Erro fatal no worker: {e}")
 
 if __name__ == "__main__":
-    main()
+    process_messages()

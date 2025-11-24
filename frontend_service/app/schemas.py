@@ -6,7 +6,8 @@ from typing import Optional
 class MessageIn(BaseModel):
     sender_id: str
     chat_id: str
-    content: str
+    content: Optional[str] = None
+    file_id: Optional[str] = None
 
 # Schema para a resposta da nossa API
 class MessageResponse(BaseModel):

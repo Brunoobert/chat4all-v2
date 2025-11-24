@@ -89,7 +89,11 @@ services:
     networks:
       - chat4all_net # IMPORTANTE: Coloque na mesma rede dos outros serviços
     environment:
-
+      - CASSANDRA_HOSTS=cassandra
+      - MINIO_URL=http://minio:9000
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - TZ=America/Sao_Paulo
       - KAFKA_BOOTSTRAP_SERVER=kafka:9092
 
   # -----------------------------------------------
@@ -108,6 +112,7 @@ services:
       - CASSANDRA_HOSTS=cassandra     # Conexão INTERNA com o Cassandra
       - CASSANDRA_KEYSPACE=chat4all_ks
       - KAFKA_TOPIC=chat_messages
+      - TZ=America/Sao_Paulo
     networks:
       - chat4all_net # 5. Coloca na mesma rede de todos os outros
 
@@ -127,6 +132,67 @@ services:
       # AQUI ESTÁ O SEGREDO:
       # Mudamos de 'localhost' para 'cockroachdb' (nome do serviço)
       - DATABASE_URL=cockroachdb://root@cockroachdb:26257/defaultdb?sslmode=disable
+      - TZ=America/Sao_Paulo
+    networks:
+      - chat4all_net
+
+  connector_whatsapp:
+    build: ./services/connector_whatsapp
+    container_name: connector_whatsapp_c
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+      - KAFKA_BROKER_URL=kafka:9092
+      - TZ=America/Sao_Paulo
+    networks:
+      - chat4all_net
+  
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - TZ=America/Sao_Paulo
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - chat4all_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - chat4all_net
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/chat-files;
+      /usr/bin/mc anonymous set public myminio/chat-files;
+      exit 0;
+      "
+  
+  connector_instagram:
+    build: ./services/connector_instagram
+    container_name: connector_instagram_c
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+      - KAFKA_BROKER_URL=kafka:9092
+      - TZ=America/Sao_Paulo
     networks:
       - chat4all_net
 
@@ -137,6 +203,7 @@ volumes:
   kafka_data:
   cassandra_data:
   cockroachdb_data:
+  minio_data:
 
 networks:
   chat4all_net:
