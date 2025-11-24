@@ -602,3 +602,4 @@ Para limpar todos os dados: `docker-compose down -v`
 **Última atualização:** Janeiro 2024
 
 
+

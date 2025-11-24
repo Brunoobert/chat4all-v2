@@ -66,14 +66,28 @@ app = FastAPI(title="Chat4All v2", version="0.1.0", lifespan=lifespan)
 # --- Endpoints ---
 
 @app.post("/token", response_model=Token, tags=["Autenticação"])
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
     user = get_user(form_data.username)
+    
+    # --- DEBUG PRINT (Adicione isto) ---
+    print(f"Tentativa de Login: {form_data.username}")
+    if not user:
+        print("ERRO: Usuário não encontrado no db.py")
+    else:
+        is_password_correct = verify_password(form_data.password, user.hashed_password)
+        print(f"Usuário encontrado. Senha correta? {is_password_correct}")
+    # -----------------------------------
+
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciais inválidas",
             headers={"WWW-Authenticate": "Bearer"},
         )
+ 
+        
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
