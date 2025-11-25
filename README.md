@@ -1,605 +1,206 @@
-# Chat4All - Sistema de Mensageria Distribuída
+Com certeza\! O seu README já está ótimo, mas para refletir a realidade atual do projeto (com MinIO, Connectors e Status Completo), precisamos atualizar algumas seções chave.
 
-Sistema de chat distribuído baseado em microserviços, utilizando Kafka para mensageria assíncrona, Cassandra para armazenamento de mensagens e CockroachDB para metadados.
+Aqui está o **README.md** completo e atualizado. Copie e substitua o seu arquivo atual.
+
+-----
+
+# Chat4All v2 - Sistema de Mensageria Distribuída
+
+Sistema de chat distribuído baseado em microsserviços, projetado para alta escalabilidade e resiliência. A arquitetura utiliza processamento de eventos (Kafka), persistência poliglota (Cassandra + CockroachDB) e armazenamento de objetos (MinIO), simulando um ambiente de produção real com integração externa (WhatsApp/Instagram).
 
 ## 📋 Índice
 
-- [Visão Geral](#visão-geral)
-- [Arquitetura](#arquitetura)
-- [Tecnologias](#tecnologias)
-- [Estrutura do Projeto](#estrutura-do-projeto)
-- [Serviços](#serviços)
-- [Pré-requisitos](#pré-requisitos)
-- [Instalação e Execução](#instalação-e-execução)
-- [Fluxo de Mensagens](#fluxo-de-mensagens)
-- [Endpoints da API](#endpoints-da-api)
-- [Configuração](#configuração)
-- [Desenvolvimento](#desenvolvimento)
-- [Troubleshooting](#troubleshooting)
+  - [Visão Geral](https://www.google.com/search?q=%23vis%C3%A3o-geral)
+  - [Arquitetura](https://www.google.com/search?q=%23arquitetura)
+  - [Tecnologias](https://www.google.com/search?q=%23tecnologias)
+  - [Estrutura do Projeto](https://www.google.com/search?q=%23estrutura-do-projeto)
+  - [Serviços](https://www.google.com/search?q=%23servi%C3%A7os)
+  - [Instalação e Execução](https://www.google.com/search?q=%23instala%C3%A7%C3%A3o-e-execu%C3%A7%C3%A3o)
+  - [Fluxo de Mensagens](https://www.google.com/search?q=%23fluxo-de-mensagens)
+  - [Endpoints da API](https://www.google.com/search?q=%23endpoints-da-api)
+  - [Configuração](https://www.google.com/search?q=%23configura%C3%A7%C3%A3o)
+  - [Troubleshooting](https://www.google.com/search?q=%23troubleshooting)
 
 ## 🎯 Visão Geral
 
-O Chat4All é uma aplicação de mensageria distribuída que implementa uma arquitetura de microserviços para processamento assíncrono de mensagens. O sistema foi projetado para ser escalável, resiliente e seguir boas práticas de arquitetura distribuída.
+O Chat4All implementa uma arquitetura orientada a eventos onde a API de entrada apenas enfileira solicitações, garantindo alta disponibilidade. Workers em background processam as mensagens, salvam no banco e roteiam para conectores externos, completando o ciclo de vida da mensagem (`SENT` → `DELIVERED` → `READ`).
 
 ### Características Principais
 
-- **Arquitetura de Microserviços**: Separação clara de responsabilidades entre serviços
-- **Mensageria Assíncrona**: Utilização do Apache Kafka para processamento de mensagens
-- **Armazenamento Distribuído**: 
-  - Cassandra para armazenamento de mensagens (alta performance de escrita)
-  - CockroachDB para metadados (consistência transacional)
-- **Autenticação JWT**: Sistema de autenticação baseado em tokens
-- **Containerização**: Todos os serviços rodam em containers Docker
+  - **Arquitetura de Microsserviços**: Separação clara de responsabilidades.
+  - **Mensageria Assíncrona**: Apache Kafka para desacoplamento total.
+  - **Persistência Poliglota**:
+      - **Cassandra**: Histórico de chat (alta escrita).
+      - **CockroachDB**: Dados de usuários e metadados (transacional).
+      - **MinIO (S3)**: Armazenamento de arquivos (imagens, documentos).
+  - **Integração Externa Mock**: Simuladores de WhatsApp e Instagram.
+  - **Autenticação JWT**: Segurança via tokens.
+  - **Containerização Completa**: Docker Compose orquestrando 9 serviços.
 
 ## 🏗️ Arquitetura
 
-```
-┌─────────────┐
-│   Cliente   │
-└──────┬──────┘
-       │ HTTP/REST
-       ▼
-┌─────────────────────┐
-│  Frontend Service   │ ◄─── FastAPI (Porta 8000)
-│  (API Gateway)      │
-└──────┬──────────────┘
-       │
-       │ Kafka Producer
-       ▼
-┌─────────────────────┐
-│   Apache Kafka      │ ◄─── Message Broker
-│   (Topic: chat_     │
-│    messages)        │
-└──────┬──────────────┘
-       │
-       │ Kafka Consumer
-       ▼
-┌─────────────────────┐
-│  Router Worker      │ ◄─── Background Worker
-│  (Consumer)         │
-└──────┬──────────────┘
-       │
-       │ INSERT
-       ▼
-┌─────────────────────┐
-│     Cassandra       │ ◄─── Message Store (Porta 9042)
-│  (chat4all_ks)      │
-└─────────────────────┘
-
-┌─────────────────────┐
-│ Metadata Service    │ ◄─── FastAPI (Porta 8001)
-│  (User Management)  │
-└──────┬──────────────┘
-       │
-       │ SQL
-       ▼
-┌─────────────────────┐
-│   CockroachDB       │ ◄─── Metadata DB (Porta 26257)
-│   (Users, Chats)    │
-└─────────────────────┘
+```mermaid
+graph TD
+    Client[Cliente HTTP] -->|POST /messages| API[Frontend Service]
+    Client -->|POST /upload| API
+    API -->|Produce| Kafka[(Kafka)]
+    API -->|Upload| MinIO[(MinIO S3)]
+    
+    Kafka -->|Consume| Worker[Router Worker]
+    
+    Worker -->|Insert| Cassandra[(Cassandra)]
+    Worker -->|Route| KafkaOut[(Kafka Topics Out)]
+    
+    KafkaOut -->|Consume| ConnectorWA[Connector WhatsApp]
+    KafkaOut -->|Consume| ConnectorIG[Connector Instagram]
+    
+    ConnectorWA -->|Webhook READ| API
+    ConnectorIG -->|Webhook READ| API
+    
+    API -.->|Auth Check| Metadata[Metadata Service]
+    Metadata -.->|SQL| Cockroach[(CockroachDB)]
 ```
 
 ## 🛠️ Tecnologias
 
 ### Backend
-- **Python 3.10/3.11**: Linguagem principal
-- **FastAPI**: Framework web para APIs REST
-- **Kafka-Python**: Cliente Python para Apache Kafka
-- **Cassandra Driver**: Cliente para Apache Cassandra
-- **SQLAlchemy**: ORM para CockroachDB
-- **Pydantic**: Validação de dados e schemas
-- **JWT**: Autenticação baseada em tokens
+
+  - **Python 3.11**: Linguagem base.
+  - **FastAPI**: API Gateway e Metadata Service.
+  - **Kafka-Python**: Produtores e Consumidores.
+  - **Cassandra Driver**: Conexão NoSQL.
+  - **SQLAlchemy**: ORM para CockroachDB.
+  - **Boto3**: Cliente S3 para MinIO.
+  - **Pydantic**: Validação de dados.
 
 ### Infraestrutura
-- **Docker & Docker Compose**: Containerização e orquestração
-- **Apache Kafka 7.3.0**: Message broker
-- **Zookeeper**: Coordenação do Kafka
-- **Apache Cassandra**: Banco de dados NoSQL para mensagens
-- **CockroachDB**: Banco de dados SQL distribuído para metadados
+
+  - **Docker Compose**: Orquestração.
+  - **Apache Kafka + Zookeeper**: Event Bus.
+  - **Apache Cassandra**: Chat Log Store.
+  - **CockroachDB**: User Store.
+  - **MinIO**: Object Storage.
 
 ## 📁 Estrutura do Projeto
 
 ```
 Chat4All/
-├── docker-compose.yml          # Orquestração de todos os serviços
-├── requirements.txt             # Dependências Python globais
-│
-├── frontend_service/            # Serviço principal de API
-│   ├── app/
-│   │   ├── main.py             # Endpoints FastAPI
-│   │   ├── producer.py         # Cliente Kafka Producer
-│   │   ├── config.py           # Configurações
-│   │   ├── schemas.py          # Modelos Pydantic
-│   │   ├── security.py         # Autenticação JWT
-│   │   └── db.py               # Acesso a dados (mock)
-│   ├── Dockerfile
-│   └── requirements.txt
-│
+├── docker-compose.yml          # Definição da infraestrutura
 ├── services/
-│   ├── router_worker/           # Worker que consome do Kafka
-│   │   ├── worker.py           # Consumer e processamento
-│   │   ├── Dockerfile
-│   │   └── requirements.txt
-│   │
-│   └── metadata_service/        # Serviço de metadados
-│       ├── app/
-│       │   ├── main.py         # Endpoints de usuários
-│       │   ├── models.py       # Modelos SQLAlchemy
-│       │   ├── schemas.py      # Schemas Pydantic
-│       │   ├── database.py     # Configuração DB
-│       │   └── security.py     # Hash de senhas
-│       ├── Dockerfile
-│       └── requirements.txt
-│
-└── client-python/               # Scripts de teste
-    ├── test_producer.py
-    └── test_consumer.py
+│   ├── frontend_service/       # API Principal (Msg + Upload)
+│   │   ├── app/
+│   │   │   ├── main.py         # Endpoints
+│   │   │   ├── s3.py           # Integração MinIO
+│   │   │   └── producer.py     # Kafka Producer
+│   ├── router_worker/          # Worker Central (Router + DB)
+│   ├── metadata_service/       # API de Usuários (CockroachDB)
+│   ├── connector_whatsapp/     # Mock de Integração
+│   └── connector_instagram/    # Mock de Integração
 ```
 
-## 🔧 Serviços
+## 🔧 Serviços e Portas
 
-### 1. Frontend Service (Porta 8000)
-**Responsabilidades:**
-- Receber requisições HTTP de clientes
-- Autenticar usuários via JWT
-- Validar mensagens recebidas
-- Enviar mensagens para o Kafka
-- Consultar histórico de mensagens no Cassandra
-
-**Endpoints principais:**
-- `POST /token` - Autenticação
-- `POST /v1/messages` - Enviar mensagem
-- `GET /v1/conversations/{id}/messages` - Histórico
-- `GET /health` - Health check
-
-### 2. Router Worker
-**Responsabilidades:**
-- Consumir mensagens do tópico Kafka `chat_messages`
-- Atualizar status das mensagens (SENT → DELIVERED)
-- Persistir mensagens no Cassandra
-- Processamento assíncrono em background
-
-### 3. Metadata Service (Porta 8001)
-**Responsabilidades:**
-- Gerenciar usuários (CRUD)
-- Gerenciar chats e conversas
-- Gerenciar permissões
-- Armazenar metadados no CockroachDB
-
-**Endpoints principais:**
-- `POST /v1/users` - Criar usuário
-- `GET /health` - Health check
-
-### 4. Infraestrutura
-
-#### Kafka (Portas 9092, 29092)
-- Broker de mensageria
-- Tópico: `chat_messages`
-- Particionamento por `chat_id` (chave da mensagem)
-
-#### Cassandra (Porta 9042)
-- Keyspace: `chat4all_ks`
-- Tabela: `messages`
-- Armazenamento de mensagens com alta performance de escrita
-
-#### CockroachDB (Portas 26257, 8080)
-- Banco de dados para metadados
-- Tabela: `users`
-- UI Admin disponível em `http://localhost:8080`
-
-## 📦 Pré-requisitos
-
-- **Docker** (versão 20.10 ou superior)
-- **Docker Compose** (versão 2.0 ou superior)
-- **Python 3.10+** (para desenvolvimento local, opcional)
-- **Git** (para clonar o repositório)
+| Serviço | Porta Host | Descrição |
+| :--- | :--- | :--- |
+| **Frontend API** | `8000` | API Principal (Mensagens, Arquivos). |
+| **Metadata API** | `8001` | API de Gestão de Usuários. |
+| **MinIO Console** | `9001` | Painel Admin de Arquivos (User/Pass: `minioadmin`). |
+| **MinIO API** | `9000` | Endpoint S3. |
+| **CockroachDB UI** | `8080` | Painel do Banco SQL. |
+| **Cassandra** | `9042` | Banco NoSQL. |
+| **Kafka** | `29092` | Broker (Acesso externo). |
 
 ## 🚀 Instalação e Execução
 
-### 1. Clone o repositório
+### 1\. Iniciar o Ecossistema
 
 ```bash
-git clone <repository-url>
-cd Chat4All
-```
-
-### 2. Inicie todos os serviços
-
-```bash
-docker-compose up -d
-```
-
-Este comando irá:
-- Baixar as imagens necessárias
-- Criar a rede Docker `chat4all_net`
-- Iniciar Zookeeper, Kafka, Cassandra e CockroachDB
-- Construir e iniciar os serviços Python
-
-### 3. Verifique o status dos serviços
-
-```bash
-docker-compose ps
-```
-
-### 4. Visualize os logs
-
-```bash
-# Todos os serviços
-docker-compose logs -f
-
-# Serviço específico
-docker-compose logs -f frontend_service
-docker-compose logs -f router_worker
-```
-
-### 5. Pare os serviços
-
-```bash
-docker-compose down
-```
-
-Para remover também os volumes (dados persistentes):
-
-```bash
-docker-compose down -v
-```
-
-## 📨 Fluxo de Mensagens
-
-### Fluxo Completo
-
-1. **Cliente → Frontend Service**
-   - Cliente faz POST em `/v1/messages` com autenticação JWT
-   - Frontend Service valida o token e os dados da mensagem
-
-2. **Frontend Service → Kafka**
-   - Mensagem é enriquecida com:
-     - `message_id` (UUID)
-     - `sender_id` (do token JWT)
-     - `timestamp_utc`
-     - `status: "SENT"`
-     - `type: "chat_message"`
-   - Mensagem é enviada para o tópico `chat_messages` com `chat_id` como chave
-
-3. **Kafka → Router Worker**
-   - Worker consome mensagens do tópico
-   - Atualiza status de `SENT` para `DELIVERED`
-
-4. **Router Worker → Cassandra**
-   - Mensagem é persistida na tabela `messages`
-   - Campos: `conversation_id`, `message_id`, `sender_id`, `content`, `created_at`, `status`
-
-### Diagrama de Sequência
-
-```
-Cliente          Frontend Service    Kafka          Router Worker    Cassandra
-  │                    │               │                  │              │
-  │──POST /messages───>│               │                  │              │
-  │                    │               │                  │              │
-  │                    │──produce()───>│                  │              │
-  │                    │               │                  │              │
-  │<──202 Accepted─────│               │                  │              │
-  │                    │               │                  │              │
-  │                    │               │──consume()──────>│              │
-  │                    │               │                  │              │
-  │                    │               │                  │──INSERT──────>│
-  │                    │               │                  │              │
-```
-
-## 🔌 Endpoints da API
-
-### Frontend Service (http://localhost:8000)
-
-#### Autenticação
-
-```http
-POST /token
-Content-Type: application/x-www-form-urlencoded
-
-username=bruno&password=test
-```
-
-**Resposta:**
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
-}
-```
-
-#### Enviar Mensagem
-
-```http
-POST /v1/messages
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "chat_id": "550e8400-e29b-41d4-a716-446655440000",
-  "content": "Olá, esta é uma mensagem de teste"
-}
-```
-
-**Resposta:**
-```json
-{
-  "status": "accepted",
-  "message_id": "123e4567-e89b-12d3-a456-426614174000"
-}
-```
-
-#### Obter Histórico
-
-```http
-GET /v1/conversations/{conversation_id}/messages
-Authorization: Bearer <token>
-```
-
-**Resposta:**
-```json
-[
-  {
-    "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
-    "message_id": "123e4567-e89b-12d3-a456-426614174000",
-    "sender_id": "bruno",
-    "content": "Olá, esta é uma mensagem de teste",
-    "created_at": "2024-01-15T10:30:00Z",
-    "status": "DELIVERED"
-  }
-]
-```
-
-#### Health Check
-
-```http
-GET /health
-```
-
-### Metadata Service (http://localhost:8001)
-
-#### Criar Usuário
-
-```http
-POST /v1/users
-Content-Type: application/json
-
-{
-  "username": "novo_usuario",
-  "email": "usuario@example.com",
-  "password": "senha_segura"
-}
-```
-
-## ⚙️ Configuração
-
-### Variáveis de Ambiente
-
-#### Frontend Service
-- `KAFKA_BOOTSTRAP_SERVER`: Endereço do Kafka (padrão: `kafka:9092` no Docker)
-- `KAFKA_TOPIC_CHAT_MESSAGES`: Nome do tópico (padrão: `chat_messages`)
-- `SECRET_KEY`: Chave secreta para JWT (gerada automaticamente)
-- `ACCESS_TOKEN_EXPIRE_MINUTES`: Tempo de expiração do token (padrão: 30)
-- `CASSANDRA_HOSTS`: Hosts do Cassandra (padrão: `cassandra`)
-
-#### Router Worker
-- `KAFKA_BROKER_URL`: URL do Kafka (padrão: `kafka:9092`)
-- `KAFKA_TOPIC`: Nome do tópico (padrão: `chat_messages`)
-- `CASSANDRA_HOSTS`: Hosts do Cassandra (padrão: `cassandra`)
-- `CASSANDRA_KEYSPACE`: Keyspace do Cassandra (padrão: `chat4all_ks`)
-
-#### Metadata Service
-- `DATABASE_URL`: URL de conexão do CockroachDB
-
-### Configuração do Kafka
-
-O Kafka está configurado com dois listeners:
-- **Interno (Docker)**: `kafka:9092` - Para comunicação entre containers
-- **Externo (Host)**: `localhost:29092` - Para acesso do host local
-
-### Inicialização do Cassandra
-
-Antes de usar o Cassandra, é necessário criar o keyspace e a tabela:
-
-```sql
--- Conectar ao Cassandra
-docker exec -it cassandra cqlsh
-
--- Criar keyspace
-CREATE KEYSPACE IF NOT EXISTS chat4all_ks
-WITH REPLICATION = {
-  'class': 'SimpleStrategy',
-  'replication_factor': 1
-};
-
--- Usar o keyspace
-USE chat4all_ks;
-
--- Criar tabela de mensagens
-CREATE TABLE IF NOT EXISTS messages (
-    conversation_id UUID,
-    message_id UUID,
-    sender_id TEXT,
-    content TEXT,
-    created_at TIMESTAMP,
-    status TEXT,
-    PRIMARY KEY (conversation_id, message_id)
-);
-```
-
-## 💻 Desenvolvimento
-
-### Executando Localmente (sem Docker)
-
-1. **Instale as dependências:**
-
-```bash
-# Frontend Service
-cd frontend_service
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# Router Worker
-cd ../services/router_worker
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-2. **Inicie apenas a infraestrutura:**
-
-```bash
-docker-compose up -d zookeeper kafka cassandra cockroachdb
-```
-
-3. **Execute os serviços localmente:**
-
-```bash
-# Terminal 1 - Frontend Service
-cd frontend_service
-uvicorn app.main:app --reload --port 8000
-
-# Terminal 2 - Router Worker
-cd services/router_worker
-python worker.py
-```
-
-### Testando com Clientes Python
-
-O projeto inclui scripts de teste em `client-python/`:
-
-```bash
-# Testar produtor
-python client-python/test_producer.py
-
-# Testar consumidor
-python client-python/test_consumer.py
-```
-
-## 🐛 Troubleshooting
-
-### Problemas Comuns
-
-#### 1. Kafka não está acessível
-
-**Sintoma:** Erro `NoBrokersAvailable`
-
-**Solução:**
-- Verifique se o Kafka está rodando: `docker-compose ps`
-- Verifique os logs: `docker-compose logs kafka`
-- Aguarde alguns segundos após iniciar (Kafka demora para inicializar)
-
-#### 2. Frontend Service não consegue conectar ao Kafka
-
-**Sintoma:** Erro de conexão no startup
-
-**Solução:**
-- Verifique a variável `KAFKA_BOOTSTRAP_SERVER` no docker-compose
-- Dentro do container, deve ser `kafka:9092`
-- Fora do container, use `localhost:29092`
-
-#### 3. Cassandra não está respondendo
-
-**Sintoma:** Erro de conexão ao Cassandra
-
-**Solução:**
-- Verifique se o keyspace foi criado
-- Verifique os logs: `docker-compose logs cassandra`
-- Aguarde o healthcheck passar antes de iniciar serviços dependentes
-
-#### 4. Mensagens não estão sendo processadas
-
-**Sintoma:** Mensagens enviadas mas não aparecem no Cassandra
-
-**Solução:**
-- Verifique se o Router Worker está rodando: `docker-compose ps router_worker`
-- Verifique os logs do worker: `docker-compose logs -f router_worker`
-- Verifique se o tópico existe no Kafka
-
-#### 5. Erro de autenticação JWT
-
-**Sintoma:** `401 Unauthorized`
-
-**Solução:**
-- Verifique se está enviando o token no header: `Authorization: Bearer <token>`
-- Verifique se o token não expirou (padrão: 30 minutos)
-- Faça login novamente em `/token`
-
-### Comandos Úteis
-
-```bash
-# Ver logs de todos os serviços
-docker-compose logs -f
-
-# Reiniciar um serviço específico
-docker-compose restart frontend_service
-
-# Reconstruir imagens após mudanças no código
-docker-compose build --no-cache frontend_service
-
-# Limpar tudo e começar do zero
-docker-compose down -v
+# Sobe toda a infraestrutura e constrói os serviços Python
 docker-compose up -d --build
-
-# Verificar conectividade entre containers
-docker exec -it frontend_service_c ping kafka
-docker exec -it router_worker_c ping cassandra
-
-# Acessar shell do container
-docker exec -it frontend_service_c /bin/bash
 ```
 
-## 📝 Notas Importantes
+### 2\. Configurar o Banco de Dados (Apenas 1ª vez)
 
-### Status das Mensagens
+O Cassandra precisa da tabela criada manualmente (pois o script automático é complexo de sincronizar).
 
-O sistema implementa um fluxo de status:
-- **SENT**: Mensagem enviada para o Kafka (definido pelo Frontend Service)
-- **DELIVERED**: Mensagem processada e salva no Cassandra (definido pelo Router Worker)
+```bash
+docker-compose exec cassandra cqlsh -e "
+CREATE KEYSPACE IF NOT EXISTS chat4all_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'};
+USE chat4all_ks;
+CREATE TABLE IF NOT EXISTS messages (
+    conversation_id uuid,
+    message_id uuid,
+    sender_id text,
+    content text,
+    status text,
+    created_at timestamp,
+    type text,
+    file_id text,
+    PRIMARY KEY (conversation_id, message_id)
+) WITH CLUSTERING ORDER BY (message_id DESC);"
+```
 
-### Particionamento no Kafka
+### 3\. Reiniciar Workers (Para pegar a tabela nova)
 
-As mensagens são particionadas por `chat_id` (chave da mensagem), garantindo que mensagens do mesmo chat sejam processadas na ordem.
+```bash
+docker-compose restart router_worker frontend_service
+```
 
-### Persistência de Dados
+## 📨 Fluxo de Mensagens (Ciclo de Vida)
 
-Os dados são persistidos em volumes Docker:
-- `kafka_data`: Dados do Kafka
-- `cassandra_data`: Dados do Cassandra
-- `cockroachdb_data`: Dados do CockroachDB
-- `zookeeper_data`: Dados do Zookeeper
+1.  **SENT**: API recebe, salva arquivo no MinIO (se houver), publica no Kafka `chat_messages`.
+2.  **DELIVERED**: Worker consome, define tipo (texto/arquivo), salva no Cassandra e roteia para o tópico de saída (`whatsapp_outbound` ou `instagram_outbound`).
+3.  **READ**: Connector consome, simula envio externo e chama webhook `PATCH /status` na API, que atualiza o Cassandra.
 
-Para limpar todos os dados: `docker-compose down -v`
+## 🔌 Endpoints Principais
 
-## 🔒 Segurança
+### 1\. Autenticação
 
-- **Autenticação**: JWT tokens com expiração configurável
-- **Senhas**: Hash com bcrypt (no Metadata Service)
-- **Rede**: Serviços isolados na rede Docker `chat4all_net`
-- **Produção**: Ajustar configurações de segurança antes de deploy em produção
+**POST** `/token`
 
-## 📚 Próximos Passos
+  * Body: `username=bruno`, `password=test`
+  * Retorna: `access_token`
 
-- [ ] Implementar healthchecks mais robustos
-- [ ] Adicionar métricas e monitoramento
-- [ ] Implementar retry logic no produtor Kafka
-- [ ] Adicionar testes automatizados
-- [ ] Implementar rate limiting
-- [ ] Adicionar documentação Swagger/OpenAPI completa
-- [ ] Implementar sistema de notificações em tempo real
-- [ ] Adicionar suporte a múltiplos tipos de mensagem
+### 2\. Upload de Arquivo
 
-## 📄 Licença
+**POST** `/v1/files/upload`
 
-[Adicione informações de licença aqui]
+  * Header: `Authorization: Bearer <token>`
+  * Body (form-data): `file` (Arquivo binário)
+  * Retorna: `file_id`, `download_url`
 
-## 👥 Contribuidores
+### 3\. Enviar Mensagem
 
-[Adicione informações de contribuidores aqui]
+**POST** `/v1/messages`
 
----
+  * Header: `Authorization: Bearer <token>`
+  * Body (JSON):
+    ```json
+    {
+      "chat_id": "uuid-da-conversa",
+      "content": "@maria veja a foto",
+      "file_id": "uuid-do-arquivo-opcional"
+    }
+    ```
+      * *Dica:* Se começar com `@`, vai para o Instagram Mock.
 
-**Última atualização:** Janeiro 2024
+### 4\. Histórico
 
+**GET** `/v1/conversations/{id}/messages`
 
+  * Retorna lista completa com status atualizado (`READ`).
 
+## ⚙️ Desenvolvimento Local
+
+Para rodar sem Docker (apenas Python local conectando na infra Docker):
+
+1.  **Infra:** `docker-compose up -d zookeeper kafka cassandra cockroachdb minio`
+2.  **Env Vars:** Configure `.env` para apontar para `localhost` (ex: `KAFKA_BROKER_URL=localhost:29092`).
+3.  **Install:** `pip install -r requirements.txt`
+4.  **Run:** `uvicorn app.main:app --reload --port 8000`
+
+-----
+
+**Autores:** Bruno Evangelista Bertoldo -  Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
+
+**Última atualização:** 24/11/2025
