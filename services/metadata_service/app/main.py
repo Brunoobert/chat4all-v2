@@ -2,34 +2,62 @@
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager # <--- Faltava este import
 import uuid
+import grpc
+import asyncio
 
-# Importamos os nossos módulos .py locais
+# Imports locais
+from .grpc_handler import AuthService
+from .proto import auth_pb2_grpc
 from . import models, schemas
 from .database import SessionLocal, engine, get_db
-
 from .security import get_password_hash
 
-# 1. Isto diz ao SQLAlchemy para criar todas as tabelas
-#    que definimos em models.py (neste caso, a tabela 'users')
-#    Isto é ótimo para desenvolvimento, mas para produção
-#    usaríamos uma ferramenta de "migração" como o Alembic.
-models.Base.metadata.create_all(bind=engine)
+# Variável global para o servidor gRPC
+grpc_server = None
 
+# --- Lifespan (Inicialização e Desligamento) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global grpc_server
+    
+    # 1. Cria as tabelas no Banco (CockroachDB)
+    models.Base.metadata.create_all(bind=engine)
+    
+    # 2. Inicia o Servidor gRPC (Assíncrono)
+    try:
+        grpc_server = grpc.aio.server()
+        auth_pb2_grpc.add_AuthServiceServicer_to_server(AuthService(), grpc_server)
+        grpc_server.add_insecure_port('[::]:50051') # Escuta na porta 50051
+        
+        # Inicia em background (sem bloquear a API REST)
+        await grpc_server.start()
+        print("✅ Servidor gRPC rodando na porta 50051")
+    except Exception as e:
+        print(f"❌ Falha ao iniciar gRPC: {e}")
 
+    yield # A aplicação roda aqui
+
+    # 3. Desligamento gracioso
+    if grpc_server:
+        print("🛑 Parando servidor gRPC...")
+        await grpc_server.stop(0)
+
+# --- Instanciação ÚNICA do App ---
 app = FastAPI(
     title="Metadata Service",
     description="Serviço para gerenciar usuários, chats e permissões.",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan # <--- OBRIGATÓRIO PARA O GRPC FUNCIONAR
 )
 
-# --- Endpoints ---
+# --- Endpoints HTTP (REST) ---
 
 @app.get("/health", tags=["Health"])
 def read_health_check():
     """Verifica se o serviço está online."""
     return {"status": "ok", "service": "metadata_service"}
-
 
 @app.post("/v1/users", 
           response_model=schemas.UserInDB, 
@@ -39,9 +67,6 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """
     Cria um novo utilizador no CockroachDB.
     """
-    # NOTA: Ainda não estamos a fazer hash da password.
-    # Vamos manter simples por agora.
-    
     # Verifica se o utilizador ou email já existem
     db_user = db.query(models.User).filter(
         (models.User.username == user.username) | (models.User.email == user.email)
@@ -53,16 +78,15 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
             detail="Username ou email já registado."
         )
 
-    # Cria o objeto modelo do SQLAlchemy
-    # (Por agora, guardamos a password como texto simples. Vamos corrigir isto mais tarde)
+    # Cria o objeto modelo do SQLAlchemy com senha hasheada
     new_user = models.User(
         username=user.username,
         email=user.email,
         hashed_password=get_password_hash(user.password)
     )
     
-    db.add(new_user)  # Adiciona à sessão
-    db.commit()     # Salva no banco de dados
-    db.refresh(new_user) # Recarrega o 'new_user' com o 'id' que o banco gerou
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
     
     return new_user

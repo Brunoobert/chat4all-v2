@@ -9,3 +9,5 @@ python-multipart
 cassandra-driver
 boto3
 python-multipart
+grpcio
+protobuf

@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package auth;
+
+// O Serviço: Define a função que o Metadata vai oferecer
+service AuthService {
+  // O Frontend envia um Username e recebe os dados do Usuário
+  rpc GetUserByUsername (UserRequest) returns (UserResponse);
+}
+
+// O Pedido
+message UserRequest {
+  string username = 1;
+}
+
+// A Resposta (os dados que estavam no seu db.py)
+message UserResponse {
+  string username = 1;
+  string email = 2;
+  string hashed_password = 3;
+  bool is_active = 4;
+  bool found = 5; // Para saber se o usuário existe ou não
+}
