@@ -24,6 +24,22 @@ from app.config import settings
 # 3. Import das funções do S3 (MinIO)
 from app.s3 import upload_file_to_minio, create_presigned_url
 
+# 4.Observabilidade
+from prometheus_client import make_asgi_app, Counter, Histogram
+
+# 1. Criar as Métricas
+REQUESTS_TOTAL = Counter(
+    "http_requests_total", 
+    "Total de requisições HTTP", 
+    ["method", "endpoint", "status"]
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds", 
+    "Tempo de resposta das requisições HTTP"
+)
+
+
+
 # Configura logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,6 +77,35 @@ async def lifespan(app: FastAPI):
         cassandra_session.shutdown()
 
 app = FastAPI(title="Chat4All v2", version="0.1.0", lifespan=lifespan)
+
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
+
+# 3. Middleware para coletar dados automaticamente
+@app.middleware("http")
+async def prometheus_middleware(request, call_next):
+    start_time = datetime.now()
+    
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception as e:
+        status_code = 500
+        raise e
+    finally:
+        # Calcula o tempo e registra
+        process_time = (datetime.now() - start_time).total_seconds()
+        
+        # Ignora a própria rota de métricas para não poluir
+        if "/metrics" not in request.url.path:
+            REQUEST_LATENCY.observe(process_time)
+            REQUESTS_TOTAL.labels(
+                method=request.method,
+                endpoint=request.url.path,
+                status=status_code
+            ).inc()
+
 
 # --- Endpoints ---
 

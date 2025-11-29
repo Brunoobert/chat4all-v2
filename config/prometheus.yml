@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s 
+
+scrape_configs:
+  - job_name: 'chat4all_services'
+    static_configs:
+      - targets: 
+        - 'frontend_service:8000'   
+        - 'router_worker:8002'      
+        - 'connector_whatsapp:8003' 
+        - 'connector_instagram:8004' 

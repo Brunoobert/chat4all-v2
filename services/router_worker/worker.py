@@ -5,6 +5,13 @@ import uuid
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
 from cassandra.cluster import Cluster
+from prometheus_client import start_http_server, Counter
+
+MESSAGES_PROCESSED = Counter(
+    'worker_messages_processed_total', 
+    'Total de mensagens processadas pelo worker',
+    ['status'] # Vamos separar por status (DELIVERED, ERROR)
+)
 
 # Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [WORKER] - %(levelname)s - %(message)s')
@@ -74,6 +81,8 @@ def process_messages():
                 
                 logger.info(f"Salvo no DB: {data['message_id']}")
 
+                MESSAGES_PROCESSED.labels(status="success").inc()
+
                 # 2. Roteamento Inteligente
                 content_text = data.get('content', '')
                 
@@ -106,4 +115,7 @@ def process_messages():
         logger.critical(f"Erro fatal no worker: {e}")
 
 if __name__ == "__main__":
+    logger.info("Iniciando servidor de métricas na porta 8002...")
+    start_http_server(8002)
+    
     process_messages()
