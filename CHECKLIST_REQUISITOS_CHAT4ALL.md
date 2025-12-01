@@ -24,7 +24,7 @@
   - Filtrar por `conversation_id` onde o usuário está em `members`
   - Retornar lista com metadados (última mensagem, timestamp, etc.)
 
-- [x ] **RF-2.1.4**: Criar tabela/modelo de `conversations` em Cassandra ou CockroachDB
+- [x] **RF-2.1.4**: Criar tabela/modelo de `conversations` em Cassandra ou CockroachDB
   - Campos: `conversation_id` (PK), `type` (private/group), `members` (list), `created_at`, `metadata` (map)
 
 #### ✅ Envio de Mensagens
@@ -562,4 +562,5 @@
 ---
 
 **Última atualização**: Baseado na análise do código em `frontend_service/`, `services/`, `docker-compose.yml` e requisitos do PDF.
+
 

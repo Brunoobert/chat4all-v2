@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 import uuid
-from typing import Optional
+from typing import Optional, List
 
 # Schema para validar o corpo (JSON) da requisição POST
 class MessageIn(BaseModel):
@@ -8,6 +8,7 @@ class MessageIn(BaseModel):
     chat_id: str
     content: Optional[str] = None
     file_id: Optional[str] = None
+    channels: Optional[list[str]] = ["all"]
 
 # Schema para a resposta da nossa API
 class MessageResponse(BaseModel):
