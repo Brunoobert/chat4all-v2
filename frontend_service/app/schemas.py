@@ -37,3 +37,22 @@ class User(BaseModel):
 # Schema do Utilizador como está na "BD"
 class UserInDB(User):
     hashed_password: str
+
+from typing import List, Dict, Optional
+from datetime import datetime
+
+# ... (seus schemas anteriores MessageIn, etc) ...
+
+# RF-2.1.1 e 2.1.2: Schema para criar conversa
+class ConversationCreate(BaseModel):
+    type: str # "private" ou "group"
+    members: List[str]
+    metadata: Optional[Dict[str, str]] = {}
+
+# RF-2.1.3: Schema para resposta
+class ConversationOut(BaseModel):
+    conversation_id: uuid.UUID
+    type: str
+    members: List[str]
+    metadata: Dict[str, str]
+    created_at: datetime

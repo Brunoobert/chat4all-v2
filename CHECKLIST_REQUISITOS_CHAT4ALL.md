@@ -8,23 +8,23 @@
 ### 2.1 Mensageria Básica
 
 #### ✅ Criar/Entrar em Conversas
-- [ ] **RF-2.1.1**: Implementar `POST /v1/conversations` para criar conversas privadas (1:1)
+- [x ] **RF-2.1.1**: Implementar `POST /v1/conversations` para criar conversas privadas (1:1)
   - Body: `{ "type": "private", "members": ["userA", "userB"], "metadata": {} }`
   - Validar que ambos os usuários existem (via metadata_service)
   - Criar registro em Cassandra ou CockroachDB com `conversation_id`, `type`, `members`, `created_at`
   - Retornar `{ "conversation_id": "<uuid>", "type": "private", ... }`
 
-- [ ] **RF-2.1.2**: Implementar `POST /v1/conversations` para criar grupos (n membros)
+- [ x] **RF-2.1.2**: Implementar `POST /v1/conversations` para criar grupos (n membros)
   - Body: `{ "type": "group", "members": ["userA", "userB", "userC", ...], "metadata": {"name": "..."} }`
   - Validar que todos os membros existem
   - Criar registro de grupo com lista de membros
   - Retornar `conversation_id` do grupo
 
-- [ ] **RF-2.1.3**: Implementar `GET /v1/conversations` para listar conversas do usuário autenticado
+- [ x] **RF-2.1.3**: Implementar `GET /v1/conversations` para listar conversas do usuário autenticado
   - Filtrar por `conversation_id` onde o usuário está em `members`
   - Retornar lista com metadados (última mensagem, timestamp, etc.)
 
-- [ ] **RF-2.1.4**: Criar tabela/modelo de `conversations` em Cassandra ou CockroachDB
+- [x ] **RF-2.1.4**: Criar tabela/modelo de `conversations` em Cassandra ou CockroachDB
   - Campos: `conversation_id` (PK), `type` (private/group), `members` (list), `created_at`, `metadata` (map)
 
 #### ✅ Envio de Mensagens

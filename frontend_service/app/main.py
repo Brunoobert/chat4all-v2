@@ -15,7 +15,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
 # Seus schemas e lógica interna
-from app.schemas import User, Token, MessageIn, MessageResponse
+# --- CORREÇÃO AQUI: Adicionado ConversationCreate e ConversationOut ---
+from app.schemas import (
+    User, Token, MessageIn, MessageResponse, 
+    ConversationCreate, ConversationOut
+)
 from app.db import get_user
 from app.security import create_access_token, get_current_user, verify_password
 from app.producer import send_message_to_kafka, get_kafka_producer, close_kafka_producer
@@ -24,21 +28,8 @@ from app.config import settings
 # 3. Import das funções do S3 (MinIO)
 from app.s3 import upload_file_to_minio, create_presigned_url
 
-# 4.Observabilidade
+# 4. Observabilidade
 from prometheus_client import make_asgi_app, Counter, Histogram
-
-# 1. Criar as Métricas
-REQUESTS_TOTAL = Counter(
-    "http_requests_total", 
-    "Total de requisições HTTP", 
-    ["method", "endpoint", "status"]
-)
-REQUEST_LATENCY = Histogram(
-    "http_request_duration_seconds", 
-    "Tempo de resposta das requisições HTTP"
-)
-
-
 
 # Configura logger
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Variável Global Cassandra
 cassandra_session = None
 
-# --- Lifespan ---
+# --- Lifespan (Inicialização e Desligamento) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global cassandra_session
@@ -78,14 +69,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Chat4All v2", version="0.1.0", lifespan=lifespan)
 
+# --- MONITORAMENTO ---
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
-# 3. Middleware para coletar dados automaticamente
+# Criar as Métricas
+REQUESTS_TOTAL = Counter(
+    "http_requests_total", 
+    "Total de requisições HTTP", 
+    ["method", "endpoint", "status"]
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds", 
+    "Tempo de resposta das requisições HTTP"
+)
+
 @app.middleware("http")
 async def prometheus_middleware(request, call_next):
     start_time = datetime.now()
-    
     try:
         response = await call_next(request)
         status_code = response.status_code
@@ -94,10 +95,7 @@ async def prometheus_middleware(request, call_next):
         status_code = 500
         raise e
     finally:
-        # Calcula o tempo e registra
         process_time = (datetime.now() - start_time).total_seconds()
-        
-        # Ignora a própria rota de métricas para não poluir
         if "/metrics" not in request.url.path:
             REQUEST_LATENCY.observe(process_time)
             REQUESTS_TOTAL.labels(
@@ -106,8 +104,7 @@ async def prometheus_middleware(request, call_next):
                 status=status_code
             ).inc()
 
-
-# --- Endpoints ---
+# --- ENDPOINTS ---
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health Check"])
 async def health_check():
@@ -116,12 +113,7 @@ async def health_check():
 @app.post("/token", response_model=Token, tags=["Autenticação"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = get_user(form_data.username)
-    
-    # (Mantive seus prints de debug se quiser)
-    print(f"Tentativa de Login: {form_data.username}")
-    if not user:
-        print("ERRO: Usuário não encontrado no db.py")
-    
+    # print(f"Tentativa de Login: {form_data.username}") # Debug opcional
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -131,31 +123,22 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- ROTA DE UPLOAD (MINIO) ---
 @app.post("/v1/files/upload", tags=["Files"])
 async def upload_file(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Faz upload de um arquivo para o MinIO e retorna um ID e URL temporária.
-    """
     file_ext = file.filename.split(".")[-1] if "." in file.filename else "bin"
     file_id = str(uuid.uuid4())
     object_name = f"{file_id}.{file_ext}"
 
     logger.info(f"Iniciando upload: {file.filename} -> {object_name}")
-
     success = upload_file_to_minio(file.file, object_name, file.content_type)
 
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Falha ao salvar arquivo no Storage."
-        )
+        raise HTTPException(status_code=500, detail="Falha ao salvar arquivo no Storage.")
 
     download_url = create_presigned_url(object_name)
-
     return {
         "file_id": file_id,
         "filename": file.filename,
@@ -164,23 +147,28 @@ async def upload_file(
         "message": "Arquivo enviado com sucesso."
     }
 
-# --- ROTA DE MENSAGENS (KAFKA) ---
 @app.post("/v1/messages", response_model=MessageResponse, status_code=202, tags=["Messages"])
 async def post_message(message_in: MessageIn, current_user: User = Depends(get_current_user)):
-    
-    logger.info(f"PAYLOAD RECEBIDO: {message_in.model_dump()}")
-    
+    logger.info(f"Recebida mensagem para chat: {message_in.chat_id}")
+
+    # VALIDAÇÃO DE MEMBRO (RF-2.1.6)
+    if cassandra_session:
+        # Verifica se a conversa existe e se o usuário é membro
+        # Nota: Em produção, usaríamos prepared statements aqui também
+        row = cassandra_session.execute(
+            "SELECT members FROM conversations WHERE conversation_id = %s", 
+            (message_in.chat_id,)
+        ).one()
+        
+        if row and current_user.username not in row.members:
+             raise HTTPException(status_code=403, detail="Você não é membro desta conversa.")
+
     message_id = uuid.uuid4()
-    
-    # Horário (Se você configurou TZ no docker-compose, use .now(). Se não, use a lógica UTC-3)
-    # Assumindo que você configurou o TZ=America/Sao_Paulo:
     timestamp_utc = (datetime.utcnow() - timedelta(hours=3)).isoformat()
 
-    # Lógica de Tipo
     msg_type = "chat_message"
     if message_in.file_id:
         msg_type = "file"
-        logger.info("Detectado anexo de arquivo. Tipo alterado para 'file'.")
 
     kafka_payload = message_in.model_dump(mode='json')
     kafka_payload.update({
@@ -188,7 +176,8 @@ async def post_message(message_in: MessageIn, current_user: User = Depends(get_c
         "message_id": str(message_id),
         "timestamp_utc": timestamp_utc,
         "type": msg_type,
-        "status": "SENT"
+        "status": "SENT",
+        "channels": message_in.channels
     })
 
     try:
@@ -198,17 +187,15 @@ async def post_message(message_in: MessageIn, current_user: User = Depends(get_c
             key=str(message_in.chat_id)
         )
         return MessageResponse(status="accepted", message_id=message_id)
-    
     except Exception as e:
         logger.error(f"Erro no envio: {e}")
-        raise HTTPException(status_code=500, detail="Erro interno ao processar mensagem.")
+        raise HTTPException(status_code=500, detail="Erro interno.")
 
 @app.get("/v1/conversations/{conversation_id}/messages", tags=["Messages"])
 def get_conversation_history(conversation_id: uuid.UUID, current_user: User = Depends(get_current_user)):
     if cassandra_session is None:
         raise HTTPException(status_code=503, detail="Banco indisponível.")
     
-    logger.info(f"Buscando histórico: {conversation_id}")
     query = "SELECT * FROM messages WHERE conversation_id = %s"
     try:
         rows = cassandra_session.execute(query, (conversation_id,))
@@ -217,7 +204,6 @@ def get_conversation_history(conversation_id: uuid.UUID, current_user: User = De
         logger.error(f"Erro Cassandra: {e}")
         raise HTTPException(status_code=500, detail="Erro ao ler histórico.")
 
-# --- ROTA DE CALLBACK (WEBHOOK) ---
 class StatusUpdate(BaseModel):
     status: str
     conversation_id: uuid.UUID
@@ -228,16 +214,72 @@ def update_message_status(message_id: uuid.UUID, update: StatusUpdate):
         raise HTTPException(status_code=503, detail="Banco indisponível.")
     
     logger.info(f"Atualizando status {message_id} para {update.status}")
-    
-    query = """
-        UPDATE messages 
-        SET status = %s 
-        WHERE conversation_id = %s AND message_id = %s
-    """
-    
+    query = "UPDATE messages SET status = %s WHERE conversation_id = %s AND message_id = %s"
     try:
         cassandra_session.execute(query, (update.status, update.conversation_id, message_id))
         return {"msg": "Status atualizado"}
     except Exception as e:
         logger.error(f"Erro no update: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- ROTAS DE CONVERSAS (RF-2.1) ---
+
+@app.post("/v1/conversations", response_model=ConversationOut, status_code=201, tags=["Conversations"])
+def create_conversation(
+    conversation: ConversationCreate,
+    current_user: User = Depends(get_current_user)
+):
+    if cassandra_session is None:
+        raise HTTPException(status_code=503, detail="Banco indisponível.")
+
+    if current_user.username not in conversation.members:
+        conversation.members.append(current_user.username)
+    
+    conversation_id = uuid.uuid4()
+    created_at = datetime.now()
+
+    query = """
+        INSERT INTO conversations (conversation_id, type, members, metadata, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+    """
+    try:
+        cassandra_session.execute(query, (
+            conversation_id,
+            conversation.type,
+            conversation.members,
+            conversation.metadata,
+            created_at
+        ))
+        return {
+            "conversation_id": conversation_id,
+            "type": conversation.type,
+            "members": conversation.members,
+            "metadata": conversation.metadata,
+            "created_at": created_at
+        }
+    except Exception as e:
+        logger.error(f"Erro ao criar conversa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- AQUI ESTÁ A ROTA QUE FALTAVA (GET) ---
+@app.get("/v1/conversations", response_model=List[ConversationOut], tags=["Conversations"])
+def list_my_conversations(current_user: User = Depends(get_current_user)):
+    """
+    (RF-2.1.3) Lista todas as conversas onde o usuário é membro.
+    """
+    if cassandra_session is None:
+        raise HTTPException(status_code=503, detail="Banco indisponível.")
+
+    # Busca todas as conversas (Limitado a 100 para a PoC)
+    # Em produção usaríamos uma tabela user_conversations
+    query = "SELECT * FROM conversations LIMIT 100"
+    
+    try:
+        rows = cassandra_session.execute(query)
+        # Filtra no Python onde o usuário está na lista de membros
+        my_convos = [row for row in rows if current_user.username in row['members']]
+        return my_convos
+    
+    except Exception as e:
+        logger.error(f"Erro ao listar conversas: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno")

@@ -53,6 +53,19 @@ services:
       retries: 10
     networks:
       - chat4all_net
+  
+  cassandra-init:
+    image: cassandra:latest
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy # Espera o healthcheck do cassandra dar OK
+    volumes:
+      - ./scripts/init_cassandra.cql:/init.cql # Injeta o script dentro do container
+    networks:
+      - chat4all_net
+    # Comando: Conecta no host 'cassandra' e roda o arquivo
+    command: cqlsh cassandra -f /init.cql
 
   # 4. CockroachDB - Metadata DB
   cockroachdb:
@@ -104,7 +117,8 @@ services:
       context: ./services/router_worker # 1. Aponta para a pasta do worker
     #container_name: router_worker_c
     depends_on:
-      - kafka         # 2. Só inicia depois do Kafka
+      - kafka # 2. Só inicia depois do Kafka
+      - cassandra-init        
       - cassandra     # 3. Só inicia depois do Cassandra
     environment:
       # 4. Injeta as variáveis de ambiente que o worker.py precisa
