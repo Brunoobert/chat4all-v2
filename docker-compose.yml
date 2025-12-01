@@ -102,7 +102,7 @@ services:
   router_worker:
     build:
       context: ./services/router_worker # 1. Aponta para a pasta do worker
-    container_name: router_worker_c
+    #container_name: router_worker_c
     depends_on:
       - kafka         # 2. Só inicia depois do Kafka
       - cassandra     # 3. Só inicia depois do Cassandra

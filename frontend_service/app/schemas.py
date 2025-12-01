@@ -4,7 +4,7 @@ from typing import Optional
 
 # Schema para validar o corpo (JSON) da requisição POST
 class MessageIn(BaseModel):
-    sender_id: str
+    #sender_id: str
     chat_id: str
     content: Optional[str] = None
     file_id: Optional[str] = None

@@ -204,3 +204,4 @@ Para rodar sem Docker (apenas Python local conectando na infra Docker):
 **Autores:** Bruno Evangelista Bertoldo -  Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
 
 **Última atualização:** 24/11/2025
+
