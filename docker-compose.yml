@@ -139,6 +139,7 @@ services:
     container_name: metadata_service_c
     ports:
       - "8001:8001"  # Expõe na porta 8001 (diferente da API de mensagens 8000)
+      - "50051:50051"
     depends_on:
       cockroachdb:
         condition: service_healthy  # Só inicia depois do banco

@@ -1,40 +1,38 @@
+# services/metadata_service/app/grpc_handler.py
+
 import grpc
 from .proto import auth_pb2, auth_pb2_grpc
 from .database import SessionLocal
 from .models import User
 
-# Esta classe implementa a interface que definimos no arquivo .proto
+# Esta classe implementa a lógica que o main.py espera
 class AuthService(auth_pb2_grpc.AuthServiceServicer):
     
     def GetUserByUsername(self, request, context):
-        """
-        Recebe um username, busca no banco e retorna os dados.
-        """
-        # 1. Abre uma conexão com o banco
+        print(f"[gRPC Server] Buscando usuário no CockroachDB: {request.username}")
+        
+        # 1. Abre sessão com o banco real
         db = SessionLocal()
         try:
-            # 2. Busca o usuário
-            print(f"[gRPC] Buscando usuário: {request.username}")
+            # 2. Faz a query SQL via SQLAlchemy
             user = db.query(User).filter(User.username == request.username).first()
             
-            # 3. Se encontrar, retorna os dados preenchidos
             if user:
+                print(f"[gRPC Server] Usuário encontrado: {user.email}")
+                # 3. Mapeia o modelo do Banco para a resposta gRPC
                 return auth_pb2.UserResponse(
                     username=user.username,
                     email=user.email,
-                    hashed_password=user.hashed_password,
+                    hashed_password=user.hashed_password, # Envia a senha criptografada para o frontend conferir
                     is_active=user.is_active,
                     found=True
                 )
-            
-            # 4. Se não encontrar, retorna com found=False
             else:
+                print(f"[gRPC Server] Usuário não encontrado.")
                 return auth_pb2.UserResponse(found=False)
                 
         except Exception as e:
-            print(f"[gRPC] Erro: {e}")
-            # Em caso de erro, retornamos não encontrado por segurança
+            print(f"[gRPC Server] Erro de banco de dados: {e}")
             return auth_pb2.UserResponse(found=False)
         finally:
-            # 5. Sempre fecha a conexão
             db.close()

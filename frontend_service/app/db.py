@@ -1,19 +1,20 @@
 from app.schemas import UserInDB
 from typing import Optional
-from .grpc_client import get_user_from_metadata # <--- Importamos o cliente gRPC
+from .grpc_client import get_user_from_metadata
 
-# --- MUDANÇA CRÍTICA: O BANCO FALSO MORREU ---
-# fake_users_db = { ... }  <-- Apagado!
+# --- FIM DO BANCO FALSO ---
+# O dicionário fake_users_db foi removido.
+# Agora a fonte da verdade é o Metadata Service.
 
 def get_user(username: str) -> Optional[UserInDB]:
     """
-    Agora busca o usuário no Metadata Service via gRPC.
+    Busca o usuário no Metadata Service via gRPC.
     """
-    # Chama o gRPC
+    # Chama a função do cliente gRPC
     user_data = get_user_from_metadata(username)
     
     if user_data:
-        # Converte o dicionário recebido para o modelo Pydantic
+        # Converte o dicionário para o objeto Pydantic que a API espera
         return UserInDB(**user_data)
     
     return None
