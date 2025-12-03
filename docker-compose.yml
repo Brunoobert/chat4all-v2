@@ -229,6 +229,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin # Senha padrão para facilitar
     depends_on:
       - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
     networks:
       - "chat4all_net"
 
@@ -240,6 +242,7 @@ volumes:
   cassandra_data:
   cockroachdb_data:
   minio_data:
+  grafana_data:
 
 networks:
   chat4all_net:

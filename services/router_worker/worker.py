@@ -7,23 +7,16 @@ from kafka import KafkaConsumer, KafkaProducer
 from cassandra.cluster import Cluster
 from prometheus_client import start_http_server, Counter
 
-MESSAGES_PROCESSED = Counter(
-    'worker_messages_processed_total', 
-    'Total de mensagens processadas pelo worker',
-    ['status'] # Vamos separar por status (DELIVERED, ERROR)
-)
+MESSAGES_PROCESSED = Counter('worker_messages_processed_total', 'Msgs processadas', ['status'])
 
-# Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [WORKER] - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configurações
 KAFKA_TOPIC_IN = os.getenv("KAFKA_TOPIC", "chat_messages")
 KAFKA_BROKER = os.getenv("KAFKA_BROKER_URL", "kafka:9092")
 CASSANDRA_HOSTS = os.getenv("CASSANDRA_HOSTS", "cassandra").split(',')
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "chat4all_ks")
 
-# Tópicos de Saída
 TOPIC_WHATSAPP = "whatsapp_outbound"
 TOPIC_INSTAGRAM = "instagram_outbound"
 
@@ -36,7 +29,6 @@ def get_cassandra_session():
 def process_messages():
     try:
         session = get_cassandra_session()
-        
         insert_stmt = session.prepare("""
             INSERT INTO messages 
             (conversation_id, created_at, message_id, sender_id, content, status, type, file_id)
@@ -44,78 +36,59 @@ def process_messages():
         """)
 
         consumer = KafkaConsumer(
-            KAFKA_TOPIC_IN,
-            bootstrap_servers=KAFKA_BROKER,
-            auto_offset_reset='earliest',
-            value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+            KAFKA_TOPIC_IN, bootstrap_servers=KAFKA_BROKER,
+            auto_offset_reset='earliest', value_deserializer=lambda x: json.loads(x.decode('utf-8'))
         )
+        producer = KafkaProducer(bootstrap_servers=KAFKA_BROKER, value_serializer=lambda v: json.dumps(v).encode('utf-8'))
 
-        producer = KafkaProducer(
-            bootstrap_servers=KAFKA_BROKER,
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
-
-        logger.info("Worker iniciado. Roteando mensagens...")
+        logger.info("Worker iniciado...")
 
         for message in consumer:
             data = message.value
             data['status'] = 'DELIVERED' 
-            msg_type = data.get('type', 'chat_message')
-            file_id = data.get('file_id')
-
+            
             try:
-                # 1. Salva no Cassandra
                 conv_id = uuid.UUID(data['chat_id'])
                 msg_id = uuid.UUID(data['message_id'])
-                
-                ts_str = data.get('timestamp_utc')
-                if ts_str:
-                    ts = datetime.fromisoformat(ts_str)
-                else:
-                    ts = datetime.now()
+                ts = datetime.fromisoformat(data.get('timestamp_utc')) if data.get('timestamp_utc') else datetime.now()
 
                 session.execute(insert_stmt, (
                     conv_id, ts, msg_id, data['sender_id'], 
-                    data.get('content'), data['status'], msg_type, file_id
+                    data.get('content'), data['status'], 
+                    data.get('type', 'chat_message'), data.get('file_id')
                 ))
-                
-                logger.info(f"Salvo no DB: {data['message_id']}")
-
                 MESSAGES_PROCESSED.labels(status="success").inc()
+                logger.info(f"Salvo: {data['message_id']}")
 
-                # 2. Roteamento Inteligente
-                content_text = data.get('content', '')
+                # ROTEAMENTO (RF-2.3)
+                channels = data.get('channels', ['all'])
+                content = data.get('content', '')
+                # Fallback para lógica antiga de @ se channels for 'all'
+                if 'all' in channels and content.startswith('@'):
+                    channels = ['instagram']
                 
-                if content_text and content_text.startswith('@'):
-                    # --- CORREÇÃO AQUI: Adicionado chat_id ---
-                    routing_payload = {
-                        "destination": "usuario_insta",
-                        "content": content_text,
-                        "original_msg_id": data['message_id'],
-                        "chat_id": data['chat_id'] # <--- FALTAVA ISTO!
-                    }
-                    producer.send(TOPIC_INSTAGRAM, routing_payload)
-                    logger.info(f"Roteado para INSTAGRAM: {data['message_id']}")
-                
-                else:
-                    # WhatsApp
-                    routing_payload = {
-                        "destination": "+556299999999", 
-                        "content": content_text or f"[Arquivo: {file_id}]",
-                        "original_msg_id": data['message_id'],
-                        "chat_id": data['chat_id']
-                    }
+                routing_payload = {
+                    "content": content or f"[Arquivo]",
+                    "original_msg_id": data['message_id'],
+                    "chat_id": data['chat_id']
+                }
+
+                if 'all' in channels or 'whatsapp' in channels:
+                    routing_payload["destination"] = "+556299999999"
                     producer.send(TOPIC_WHATSAPP, routing_payload)
-                    logger.info(f"Roteado para WHATSAPP: {data['message_id']}")
+                    logger.info("-> WhatsApp")
+
+                if 'all' in channels or 'instagram' in channels:
+                    routing_payload["destination"] = "usuario_insta"
+                    producer.send(TOPIC_INSTAGRAM, routing_payload)
+                    logger.info("-> Instagram")
 
             except Exception as e:
-                logger.error(f"Erro processando mensagem: {e}")
+                logger.error(f"Erro msg: {e}")
 
     except Exception as e:
-        logger.critical(f"Erro fatal no worker: {e}")
+        logger.critical(f"Erro fatal: {e}")
 
 if __name__ == "__main__":
-    logger.info("Iniciando servidor de métricas na porta 8002...")
     start_http_server(8002)
-    
     process_messages()

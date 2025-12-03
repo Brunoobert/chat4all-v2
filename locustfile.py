@@ -1,51 +1,36 @@
 from locust import HttpUser, task, between
 import uuid
 
-@task
-def send_message(self):
-    if not self.token:
-        return
-
-    headers = {"Authorization": f"Bearer {self.token}"}
-    
-    # Payload limpo, sem sender_id
-    self.client.post("/v1/messages", json={
-        "chat_id": "11111111-1111-1111-1111-111111111111",
-        "content": "Teste de Carga Locust"
-    }, headers=headers)
-
 class ChatUser(HttpUser):
-    wait_time = between(1, 3) # Espera entre 1 e 3 segundos
+    wait_time = between(1, 3) # Simula um usuário real esperando entre 1s e 3s
     token = None
 
     def on_start(self):
         """
-        Executado quando cada usuário virtual "nasce".
-        Faz login para pegar o token.
+        Executado uma vez quando o usuário "nasce".
+        Faz login para pegar o token JWT.
         """
-        # Usando o usuário novo que acabamos de criar no Metadata
+        # Garanta que este usuário 'locust_user' existe no seu Metadata Service!
         response = self.client.post("/token", data={"username": "locust_user", "password": "123"})
         
         if response.status_code == 200:
             self.token = response.json()["access_token"]
         else:
-            print(f"Falha no Login do Locust: {response.status_code} - {response.text}")
+            print(f"❌ Falha no Login do Locust: {response.status_code} - {response.text}")
 
     @task
     def send_message(self):
         """
-        Tarefa principal: Enviar mensagens
+        Tarefa principal: Enviar mensagens continuamente.
         """
         if not self.token:
-            return # Se não logou, não tenta enviar
+            return # Se não logou, aborta
 
         headers = {"Authorization": f"Bearer {self.token}"}
         
-        # Usa um chat_id fixo para teste
-        chat_id = "11111111-1111-1111-1111-111111111111"
-        
+        # Payload limpo (conforme o Schema atualizado)
+        # Não precisa mandar sender_id, a API pega do token
         self.client.post("/v1/messages", json={
-            "chat_id": chat_id,
-            "content": "Teste de Carga Locust Automático",
-            "sender_id": "locust_user"
+            "chat_id": "8f8736df-112b-4bcc-a298-12804c76f7fc",
+            "content": "Teste de Carga Final"
         }, headers=headers)
