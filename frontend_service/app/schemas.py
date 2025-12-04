@@ -1,7 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import uuid
 from typing import Optional, List, Dict
+from enum import Enum
 from datetime import datetime
+
+# --- ENUMS (Novos) ---
+class ChannelType(str, Enum):
+    WHATSAPP = "whatsapp"
+    INSTAGRAM = "instagram"
+    TELEGRAM = "telegram"
+    ALL = "all"
 
 # --- AUTH & USERS ---
 class Token(BaseModel):
@@ -20,9 +28,9 @@ class User(BaseModel):
 class UserInDB(User):
     hashed_password: str
 
-# --- CONVERSATIONS (RF-2.1) ---
+# --- CONVERSATIONS ---
 class ConversationCreate(BaseModel):
-    type: str # "private" ou "group"
+    type: str 
     members: List[str]
     metadata: Optional[Dict[str, str]] = {}
 
@@ -30,17 +38,22 @@ class ConversationOut(BaseModel):
     conversation_id: uuid.UUID
     type: str
     members: List[str]
-    metadata: Dict[str, str]
+    metadata: Optional[Dict[str, str]] = {}
     created_at: datetime
 
-# --- MESSAGES ---
+# --- MESSAGES (Atualizado) ---
 class MessageIn(BaseModel):
-    # sender_id removido (vem do token)
     chat_id: uuid.UUID
     content: Optional[str] = None
     file_id: Optional[str] = None
-    # RF-2.3: Canais explícitos
-    channels: Optional[List[str]] = ["all"] 
+    # Validação: aceita lista de canais ou "all" como padrão
+    channels: Optional[List[ChannelType]] = [ChannelType.ALL]
+
+    @model_validator(mode='after')
+    def check_content_or_file(self):
+        if not self.content and not self.file_id:
+            raise ValueError('A mensagem deve conter texto ou um arquivo.')
+        return self
 
 class MessageResponse(BaseModel):
     status: str = "accepted"
