@@ -8,7 +8,7 @@ from cassandra.query import dict_factory
 from typing import List
 
 # Imports do FastAPI
-from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header, Request
 from contextlib import asynccontextmanager
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -101,31 +101,45 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 # --- ROTA DE UPLOAD (A QUE ESTAVA FALTANDO) ---
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 @app.post("/v1/files/upload", tags=["Files"])
 async def upload_file(
+    request: Request, # <--- Necessário para ler os headers
     file: UploadFile = File(...),
+    content_length: int = Header(None), # <--- Pega o tamanho informado
     current_user: User = Depends(get_current_user)
 ):
-    # Gera nome único
+    """
+    (RF-2.1.10) Faz upload com validação de tamanho (Máx 2GB).
+    """
+    # 1. Validação via Header (Rápida)
+    if content_length and content_length > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413, # Payload Too Large
+            detail=f"Arquivo muito grande. O limite é 2GB."
+        )
+
+    # 2. Validação via leitura do spool (Segurança extra, opcional para PoC)
+    # Para arquivos gigantes, confiamos no Nginx/Header para não travar a RAM.
+
     file_ext = file.filename.split(".")[-1] if "." in file.filename else "bin"
     file_id = str(uuid.uuid4())
     object_name = f"{file_id}.{file_ext}"
 
-    logger.info(f"Iniciando upload: {file.filename} -> {object_name}")
+    logger.info(f"Iniciando upload: {file.filename} (Tamanho: {content_length}) -> {object_name}")
 
-    # Envia para o MinIO
     success = upload_file_to_minio(file.file, object_name, file.content_type)
 
     if not success:
         raise HTTPException(status_code=500, detail="Falha ao salvar arquivo no Storage.")
 
-    # Gera URL
     download_url = create_presigned_url(object_name)
 
     return {
         "file_id": file_id,
         "filename": file.filename,
         "content_type": file.content_type,
+        "size": content_length,
         "download_url": download_url,
         "message": "Arquivo enviado com sucesso."
     }
@@ -156,7 +170,9 @@ async def post_message(message_in: MessageIn, current_user: User = Depends(get_c
             
             # 4. Validação: É membro?
             # Trata tanto dict quanto objeto para evitar erros de tipo
-            members_list = row['members'] if isinstance(row, dict) else row.members
+            else:
+        
+                members_list = row['members'] if isinstance(row, dict) else row.members
             
             if current_user.username not in members_list:
                 logger.warning(f"BLOQUEIO: {current_user.username} tentou postar em {chat_uuid}")
