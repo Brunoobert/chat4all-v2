@@ -6,6 +6,7 @@ from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
 from cassandra.cluster import Cluster
 from prometheus_client import start_http_server, Counter
+import redis
 
 # Métricas
 MESSAGES_PROCESSED = Counter('worker_messages_processed_total', 'Msgs processadas', ['status'])
@@ -19,10 +20,19 @@ KAFKA_TOPIC_IN = os.getenv("KAFKA_TOPIC", "chat_messages")
 KAFKA_BROKER = os.getenv("KAFKA_BROKER_URL", "kafka:9092")
 CASSANDRA_HOSTS = os.getenv("CASSANDRA_HOSTS", "cassandra").split(',')
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "chat4all_ks")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 # Tópicos de Saída (Connectors)
 TOPIC_WHATSAPP = "whatsapp_outbound"
 TOPIC_INSTAGRAM = "instagram_outbound"
+
+# Cliente Redis Global
+try:
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    logger.info(f"Conectado ao Redis: {REDIS_URL}")
+except Exception as e:
+    logger.error(f"Falha ao configurar Redis: {e}")
+    redis_client = None
 
 def get_cassandra_session():
     cluster = Cluster(CASSANDRA_HOSTS)
@@ -33,11 +43,15 @@ def get_cassandra_session():
 def process_messages():
     try:
         session = get_cassandra_session()
-        # Prepared Statement atualizado com 'channels'
+        
         insert_stmt = session.prepare("""
             INSERT INTO messages 
             (conversation_id, created_at, message_id, sender_id, content, status, type, file_id, channels)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+
+        select_members_stmt = session.prepare("""
+            SELECT members FROM conversations WHERE conversation_id = ?
         """)
 
         consumer = KafkaConsumer(
@@ -58,7 +72,7 @@ def process_messages():
             data['status'] = 'DELIVERED' 
             
             try:
-                # Conversão de tipos
+                # Conversão
                 conv_id = uuid.UUID(data['chat_id'])
                 msg_id = uuid.UUID(data['message_id'])
                 ts = datetime.fromisoformat(data.get('timestamp_utc')) if data.get('timestamp_utc') else datetime.now()
@@ -74,7 +88,45 @@ def process_messages():
                 MESSAGES_PROCESSED.labels(status="success").inc()
                 logger.info(f"Salvo no DB: {msg_id}")
 
-                # 2. Lógica de Roteamento
+                # 2. REAL-TIME (REDIS) - COM MODO ECO ATIVADO E LOG VISÍVEL
+                if redis_client:
+                    try:
+                        row = session.execute(select_members_stmt, (conv_id,)).one()
+                        
+                        members = []
+                        if row:
+                            # Tenta acessar como dict, se falhar, tenta como atributo (objeto/tupla nomeada)
+                            try:
+                                members = row['members'] # Se for dict
+                            except (TypeError, IndexError):
+                                try:
+                                    members = row.members # Se for objeto/NamedTuple
+                                except:
+                                    members = row[0] # Se for tupla pura (último caso)
+
+                        if members:
+                            ws_payload = {
+                                "type": "message",
+                                "conversation_id": str(conv_id),
+                                "sender_id": data['sender_id'],
+                                "content": data.get('content', ''),
+                                "file_id": data.get('file_id'),
+                                "timestamp": data.get('timestamp_utc'),
+                                "to_user": "" 
+                            }
+
+                            for member in members:
+                                # if member != data['sender_id']: <--- COMENTADO PARA TESTE
+                                event = ws_payload.copy()
+                                event["to_user"] = member
+                                
+                                redis_client.publish("chat_events", json.dumps(event))
+                                logger.info(f"⚡ REAL-TIME: Enviado para Redis -> {member}")
+
+                    except Exception as redis_error:
+                        logger.error(f"Erro Redis: {redis_error}")
+
+                # 3. ROTEAMENTO EXTERNO
                 content = data.get('content', '')
                 routing_payload = {
                     "content": content or f"[Arquivo ID: {data.get('file_id')}]",
@@ -84,37 +136,28 @@ def process_messages():
                 }
 
                 destinations = []
-                
-                # Se for 'all', manda para todos os configurados
                 if 'all' in channels_list:
                     destinations.append((TOPIC_WHATSAPP, "whatsapp"))
                     destinations.append((TOPIC_INSTAGRAM, "instagram"))
                 else:
-                    # Se for específico, seleciona apenas os solicitados
-                    if 'whatsapp' in channels_list:
-                        destinations.append((TOPIC_WHATSAPP, "whatsapp"))
-                    if 'instagram' in channels_list:
-                        destinations.append((TOPIC_INSTAGRAM, "instagram"))
+                    if 'whatsapp' in channels_list: destinations.append((TOPIC_WHATSAPP, "whatsapp"))
+                    if 'instagram' in channels_list: destinations.append((TOPIC_INSTAGRAM, "instagram"))
 
-                # Envio para Kafka (Connectors)
                 for topic, channel_name in destinations:
-                    # Simulação de destino (futuro: virá do Metadata Service)
                     target = "+556299999999" if channel_name == "whatsapp" else "@usuario_insta"
-                    
                     payload_final = routing_payload.copy()
                     payload_final["destination"] = target
-                    
                     producer.send(topic, payload_final)
-                    logger.info(f"-> Roteado para {channel_name} (Tópico: {topic})")
+                    logger.info(f"-> Encaminhado para {channel_name}")
 
                 producer.flush()
 
             except Exception as e:
-                logger.error(f"Erro ao processar mensagem {data.get('message_id')}: {e}")
+                logger.error(f"Erro msg {data.get('message_id')}: {e}")
                 MESSAGES_PROCESSED.labels(status="error").inc()
 
     except Exception as e:
-        logger.critical(f"Erro fatal ao conectar Kafka/Cassandra: {e}")
+        logger.critical(f"Erro fatal Worker: {e}")
 
 if __name__ == "__main__":
     start_http_server(8002)

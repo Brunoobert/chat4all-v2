@@ -28,5 +28,29 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at timestamp
 );
 
+CREATE TABLE IF NOT EXISTS file_uploads (
+    file_id uuid PRIMARY KEY,
+    filename text,
+    total_size bigint,
+    chunk_size int,
+    total_chunks int,
+    uploaded_chunks set<int>, -- Lista de índices já recebidos (ex: {1, 2, 5})
+    status text, -- 'PENDING', 'COMPLETED', 'FAILED'
+    upload_url text, -- URL final no MinIO
+    owner_id text,
+    created_at timestamp
+);
+
+-- Tabela de Metadados de Arquivos (Arquivo pronto)
+CREATE TABLE IF NOT EXISTS files (
+    file_id uuid PRIMARY KEY,
+    owner_id text,
+    filename text,
+    size bigint,
+    content_type text,
+    minio_path text,
+    created_at timestamp
+);
+
 -- 4. Índices
 CREATE INDEX IF NOT EXISTS ON conversations (type);

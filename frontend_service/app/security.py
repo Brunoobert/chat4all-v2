@@ -92,3 +92,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     #     raise HTTPException(status_code=400, detail="Utilizador inativo")
 
     return user
+
+async def get_current_user_ws(token: str):
+    """Versão do get_current_user que não usa Depends, para WebSockets"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None: raise Exception()
+        from app.db import get_user
+        user = get_user(username=username)
+        if user is None: raise Exception()
+        return user
+    except JWTError:
+        raise Exception("Token inválido")

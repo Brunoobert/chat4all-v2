@@ -58,3 +58,25 @@ class MessageIn(BaseModel):
 class MessageResponse(BaseModel):
     status: str = "accepted"
     message_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+
+# --- ARQUIVOS (Chunked Upload) ---
+class FileInit(BaseModel):
+    filename: str
+    total_size: int
+    content_type: str
+
+class FileInitResponse(BaseModel):
+    file_id: uuid.UUID
+    chunk_size: int = 5 * 1024 * 1024  # 5MB padrão
+    total_chunks: int
+
+class FileStatus(BaseModel):
+    file_id: uuid.UUID
+    uploaded_chunks: List[int] # Lista de índices já recebidos (ex: [0, 1, 2])
+    status: str # PENDING, COMPLETED, FAILED
+    missing_chunks: List[int]
+
+class FileCompleteResponse(BaseModel):
+    file_id: uuid.UUID
+    download_url: str
+    message: str

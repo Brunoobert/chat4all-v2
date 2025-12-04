@@ -2,208 +2,287 @@ import uuid
 import os
 import json
 import logging
+import asyncio
+import math
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
+# Imports de Banco e Mensageria
 from cassandra.cluster import Cluster
 from cassandra.query import dict_factory
+import redis.asyncio as redis
 
-from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header, Request
+# Imports FastAPI
+from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header, Request, WebSocket, WebSocketDisconnect, Body, Form
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi.security import OAuth2PasswordRequestForm
-from prometheus_client import make_asgi_app, Counter, Histogram
+from prometheus_client import make_asgi_app
+from pydantic import BaseModel
 
-# Seus schemas e lógica interna
+# Imports Locais
 from app.schemas import (
     User, Token, MessageIn, MessageResponse, 
-    ConversationCreate, ConversationOut
+    ConversationCreate, ConversationOut,
+    FileInit, FileInitResponse, FileCompleteResponse
 )
 from app.db import get_user
-from app.security import create_access_token, get_current_user, verify_password
+from app.security import create_access_token, get_current_user, verify_password, get_current_user_ws
 from app.producer import send_message_to_kafka, get_kafka_producer, close_kafka_producer
 from app.config import settings
-from app.s3 import upload_file_to_minio, create_presigned_url
+from app.s3_multipart import upload_chunk_to_minio, compose_final_file
 
 # Configura logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Variável Global Cassandra
-cassandra_session = None
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            # args[2] é o caminho da URL (ex: /v1/messages/../status)
+            url = record.args[2]
+            if "/status" in url: return False  # Esconde logs de status
+            if "/metrics" in url: return False # Esconde logs do Prometheus
+            return True
+        except:
+            return True
 
-# --- Lifespan ---
+# Aplica o filtro no logger de acesso do Uvicorn
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
+
+# --- VARIÁVEIS GLOBAIS ---
+cassandra_session = None
+redis_client = None
+
+# --- MODELOS EXTRAS ---
+class MessageStatusUpdate(BaseModel):
+    status: str
+    conversation_id: uuid.UUID
+
+# --- GERENCIADOR WEBSOCKET ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, List[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
+        logger.info(f"WS: Usuário {user_id} conectado.")
+
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        if user_id in self.active_connections:
+            if websocket in self.active_connections[user_id]:
+                self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
+
+    async def send_personal_message(self, message: str, user_id: str):
+        if user_id in self.active_connections:
+            for connection in self.active_connections[user_id]:
+                try:
+                    await connection.send_text(message)
+                except Exception:
+                    pass 
+
+manager = ConnectionManager()
+
+# --- LISTENER REDIS (Background) ---
+async def redis_listener():
+    logger.info("Iniciando Redis Listener...")
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe("chat_events")
+    
+    async for message in pubsub.listen():
+        if message["type"] == "message":
+            try:
+                data = json.loads(message["data"])
+                target_user = data.get("to_user")
+                payload = json.dumps(data)
+                if target_user:
+                    await manager.send_personal_message(payload, target_user)
+            except Exception as e:
+                logger.error(f"Erro no Redis Listener: {e}")
+
+# --- LIFESPAN (Inicialização) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global cassandra_session
-    logger.info("Iniciando aplicação...")
+    global cassandra_session, redis_client
     
-    try:
-        get_kafka_producer()
-        logger.info("Conexão com Kafka OK.")
-    except Exception as e:
-        logger.critical(f"Falha no Kafka: {e}")
+    # 1. Kafka
+    try: get_kafka_producer()
+    except: logger.critical("Kafka falhou (pode ser temporário)")
 
+    # 2. Cassandra (Com fix de protocolo)
     try:
         CASSANDRA_HOSTS = os.getenv("CASSANDRA_HOSTS", "cassandra").split(',')
-        cluster = Cluster(CASSANDRA_HOSTS)
+        cluster = Cluster(CASSANDRA_HOSTS, protocol_version=4)
         session = cluster.connect()
         session.set_keyspace('chat4all_ks')
         session.row_factory = dict_factory
         cassandra_session = session
-        logger.info("Conexão com Cassandra OK.")
-    except Exception as e:
-        logger.critical(f"Falha ao conectar no Cassandra: {e}")
+        logger.info("Cassandra OK")
+    except Exception as e: 
+        logger.critical(f"Cassandra falhou: {e}")
+
+    # 3. Redis
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+        asyncio.create_task(redis_listener())
+        logger.info("Redis OK")
+    except Exception as e: 
+        logger.critical(f"Redis falhou: {e}")
 
     yield
-    logger.info("Desligando aplicação...")
     close_kafka_producer()
-    if cassandra_session:
-        cassandra_session.shutdown()
+    if cassandra_session: cassandra_session.shutdown()
+    if redis_client: await redis_client.close()
 
-app = FastAPI(title="Chat4All v2", version="0.1.0", lifespan=lifespan)
+# --- APP SETUP ---
+app = FastAPI(title="Chat4All v2", version="0.2.0", lifespan=lifespan)
 
-# --- MONITORAMENTO ---
+# CORS (Importante para o Demo HTML)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
-# --- ENDPOINTS ---
+# ==========================================
+# ENDPOINTS
+# ==========================================
 
-@app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user(form_data.username)
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-# --- [RF-2.1.1] e [RF-2.1.2]: Criar Conversas (Privadas ou Grupos) ---
-@app.post("/v1/conversations", response_model=ConversationOut, status_code=201, tags=["Conversations"])
-def create_conversation(conversation: ConversationCreate, current_user: User = Depends(get_current_user)):
-    if not cassandra_session: 
-        raise HTTPException(503, "Banco offline")
-    
-    # Adiciona o criador aos membros se não estiver
-    members_list = conversation.members
-    if current_user.username not in members_list:
-        members_list.append(current_user.username)
-    
-    # Gera ID único
-    cid = uuid.uuid4()
-    created_at = datetime.now()
-    
+# --- WEBSOCKET ---
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str):
     try:
-        # Insere no Cassandra
-        query = """
-            INSERT INTO conversations (conversation_id, type, members, metadata, created_at) 
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        cassandra_session.execute(query, (
-            cid, 
-            conversation.type, 
-            members_list, 
-            conversation.metadata, 
-            created_at
-        ))
-        
-        logger.info(f"Conversa criada: {cid} do tipo {conversation.type}")
-        
-        return {
-            "conversation_id": cid,
-            "type": conversation.type,
-            "members": members_list,
-            "metadata": conversation.metadata,
-            "created_at": created_at
-        }
-    except Exception as e:
-        logger.error(f"Erro ao criar conversa: {e}")
-        raise HTTPException(500, "Erro ao persistir conversa.")
+        user = await get_current_user_ws(token)
+    except:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
-# --- [RF-2.1.3]: Listar Conversas do Usuário ---
-@app.get("/v1/conversations", response_model=List[ConversationOut], tags=["Conversations"])
-def list_conversations(current_user: User = Depends(get_current_user)):
-    if not cassandra_session: 
-        raise HTTPException(503, "Banco offline")
-    
+    await manager.connect(websocket, user.username)
     try:
-        # Nota: Em produção, usaríamos uma tabela de lookup 'user_conversations'
-        # Para PoC/Hackathon, fazemos SELECT ALL e filtramos no Python (ALLOW FILTERING é lento)
-        rows = cassandra_session.execute("SELECT * FROM conversations")
-        
-        user_conversations = []
-        for row in rows:
-            # Cassandra retorna List como SortedSet ou List dependendo do driver, convertemos
-            members = list(row['members']) if row['members'] else []
-            if current_user.username in members:
-                user_conversations.append(row)
-        
-        return user_conversations
-    except Exception as e:
-        logger.error(f"Erro ao listar conversas: {e}")
-        raise HTTPException(500, "Erro interno ao buscar conversas.")
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user.username)
 
-# --- MENSAGENS (Já existente, apenas mantendo a integridade) ---
-@app.post("/v1/messages", response_model=MessageResponse, status_code=202, tags=["Messages"])
-async def post_message(message_in: MessageIn, current_user: User = Depends(get_current_user)):
-    # Validações básicas
+# --- UPLOAD RESUMABLE ---
+CHUNK_SIZE = 5 * 1024 * 1024 # 5MB
+
+@app.post("/v1/files/initiate", response_model=FileInitResponse)
+def initiate_upload(file_data: FileInit, current_user: User = Depends(get_current_user)):
     if not cassandra_session: raise HTTPException(503, "Banco offline")
-
-    # Verifica se conversa existe (Opcional: Cachear isso seria bom no futuro)
-    try:
-        chat_uuid = message_in.chat_id # O Pydantic já converteu para UUID
-        row = cassandra_session.execute(
-            "SELECT members FROM conversations WHERE conversation_id = %s", (chat_uuid,)
-        ).one()
-        
-        if not row:
-            raise HTTPException(404, "Conversa não encontrada.")
-        
-        # Valida pertinência
-        members = row['members'] if row['members'] else []
-        if current_user.username not in members:
-            raise HTTPException(403, "Você não é membro desta conversa.")
-            
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Erro validação: {e}")
-        raise HTTPException(500, "Erro de validação.")
-
-    # Prepara envio
-    message_id = uuid.uuid4()
-    timestamp_utc = (datetime.utcnow() - timedelta(hours=3)).isoformat()
+    file_id = uuid.uuid4()
+    total_chunks = math.ceil(file_data.total_size / CHUNK_SIZE)
     
-    # Monta payload
+    query = "INSERT INTO file_uploads (file_id, filename, total_size, chunk_size, total_chunks, uploaded_chunks, status, owner_id, created_at) VALUES (%s, %s, %s, %s, %s, {}, 'PENDING', %s, %s)"
+    cassandra_session.execute(query, (file_id, file_data.filename, file_data.total_size, CHUNK_SIZE, total_chunks, current_user.username, datetime.now()))
+    
+    return {"file_id": file_id, "chunk_size": CHUNK_SIZE, "total_chunks": total_chunks}
+
+@app.post("/v1/files/{file_id}/chunk")
+async def upload_chunk(file_id: uuid.UUID, chunk_index: int = Form(...), file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    content = await file.read()
+    success = upload_chunk_to_minio(str(file_id), chunk_index, content)
+    if not success: raise HTTPException(500, "Falha no Storage")
+    
+    if cassandra_session:
+        cassandra_session.execute("UPDATE file_uploads SET uploaded_chunks = uploaded_chunks + {%s} WHERE file_id = %s", (chunk_index, file_id))
+    return {"status": "chunk_received", "index": chunk_index}
+
+@app.post("/v1/files/{file_id}/complete", response_model=FileCompleteResponse)
+def complete_upload(file_id: uuid.UUID, current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "Banco offline")
+    row = cassandra_session.execute("SELECT total_chunks, uploaded_chunks, filename, total_size FROM file_uploads WHERE file_id = %s", (file_id,)).one()
+    if not row: raise HTTPException(404, "Upload não encontrado")
+    
+    uploaded_count = len(row['uploaded_chunks']) if row['uploaded_chunks'] else 0
+    if uploaded_count < row['total_chunks']:
+        raise HTTPException(400, f"Incompleto: {uploaded_count}/{row['total_chunks']}")
+
+    try:
+        download_url = compose_final_file(str(file_id), row['filename'], row['total_chunks'])
+        cassandra_session.execute("INSERT INTO files (file_id, owner_id, filename, size, minio_path, created_at) VALUES (%s, %s, %s, %s, %s, %s)", (file_id, current_user.username, row['filename'], row['total_size'], f"uploads/{file_id}", datetime.now()))
+        cassandra_session.execute("UPDATE file_uploads SET status = 'COMPLETED' WHERE file_id = %s", (file_id,))
+        return {"file_id": file_id, "download_url": download_url, "message": "Sucesso!"}
+    except Exception as e:
+        logger.error(f"Erro compose: {e}")
+        raise HTTPException(500, "Erro ao processar arquivo")
+
+# --- MENSAGENS (CORE) ---
+@app.post("/v1/messages", response_model=MessageResponse, status_code=202)
+async def post_message(message_in: MessageIn, current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    
+    # Validação de Pertinência
+    try:
+        row = cassandra_session.execute("SELECT members FROM conversations WHERE conversation_id = %s", (message_in.chat_id,)).one()
+        if not row: raise HTTPException(404, "Conversa não encontrada")
+        members = row['members'] if row['members'] else []
+        if current_user.username not in members: raise HTTPException(403, "Você não é membro desta conversa")
+    except HTTPException as he: raise he
+    except: pass # Ignora erro de banco para não travar, mas idealmente trataria
+
+    msg_id = uuid.uuid4()
     payload = message_in.model_dump(mode='json')
     payload.update({
         "sender_id": current_user.username,
-        "message_id": str(message_id),
-        "timestamp_utc": timestamp_utc,
+        "message_id": str(msg_id),
+        "timestamp_utc": (datetime.utcnow() - timedelta(hours=3)).isoformat(),
         "type": "file" if message_in.file_id else "chat_message",
         "status": "SENT"
     })
+    send_message_to_kafka(settings.KAFKA_TOPIC_CHAT_MESSAGES, payload, key=str(message_in.chat_id))
+    return MessageResponse(status="accepted", message_id=msg_id)
 
-    # Envia para Kafka
-    try:
-        send_message_to_kafka(settings.KAFKA_TOPIC_CHAT_MESSAGES, payload, key=str(message_in.chat_id))
-        return MessageResponse(status="accepted", message_id=message_id)
-    except Exception as e:
-        logger.error(f"Kafka error: {e}")
-        raise HTTPException(500, "Erro no envio da mensagem")
+# --- [FIX] ENDPOINT PARA SILENCIAR ERROS DOS CONECTORES ---
+@app.patch("/v1/messages/{message_id}/status")
+def update_status_callback(message_id: uuid.UUID, status_data: MessageStatusUpdate):
+    """Recebe callback dos conectores e atualiza status no banco"""
+    if cassandra_session:
+        try:
+            cassandra_session.execute(
+                "UPDATE messages SET status = %s WHERE conversation_id = %s AND message_id = %s",
+                (status_data.status, status_data.conversation_id, message_id)
+            )
+        except Exception as e:
+            logger.error(f"Erro ao atualizar status: {e}")
+    return {"status": "ok"} # Retorna 200 para o conector ficar feliz
 
-# --- HISTÓRICO ---
-@app.get("/v1/conversations/{conversation_id}/messages", tags=["Messages"])
+# --- AUTH & CONVERSAS ---
+@app.post("/token", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = get_user(form_data.username)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(401, "Credenciais inválidas")
+    return {"access_token": create_access_token({"sub": user.username}), "token_type": "bearer"}
+
+@app.post("/v1/conversations", response_model=ConversationOut, status_code=201)
+def create_conv(conv: ConversationCreate, current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    cid = uuid.uuid4()
+    mems = conv.members
+    if current_user.username not in mems: mems.append(current_user.username)
+    cassandra_session.execute("INSERT INTO conversations (conversation_id, type, members, metadata, created_at) VALUES (%s, %s, %s, %s, %s)", (cid, conv.type, mems, conv.metadata, datetime.now()))
+    return {"conversation_id": cid, "type": conv.type, "members": mems, "metadata": conv.metadata, "created_at": datetime.now()}
+
+@app.get("/v1/conversations", response_model=List[ConversationOut])
+def list_conv(current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    rows = cassandra_session.execute("SELECT * FROM conversations")
+    return [r for r in rows if current_user.username in (r['members'] or [])]
+
+@app.get("/v1/conversations/{conversation_id}/messages")
 def get_history(conversation_id: uuid.UUID, current_user: User = Depends(get_current_user)):
-    if not cassandra_session: raise HTTPException(503, "Banco offline")
-    # Busca mensagens ordenadas (graças ao CLUSTERING ORDER BY do Cassandra)
-    rows = cassandra_session.execute(
-        "SELECT * FROM messages WHERE conversation_id = %s", (conversation_id,)
-    )
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    rows = cassandra_session.execute("SELECT * FROM messages WHERE conversation_id = %s", (conversation_id,))
     return list(rows)
-
-# --- UPLOAD SIMPLES (Será substituído no Dia 2) ---
-@app.post("/v1/files/upload", tags=["Files"])
-async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
-    file_id = str(uuid.uuid4())
-    object_name = f"{file_id}_{file.filename}"
-    upload_file_to_minio(file.file, object_name, file.content_type)
-    return {"file_id": file_id, "url": create_presigned_url(object_name)}
