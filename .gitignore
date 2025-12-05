@@ -27,6 +27,7 @@ grafana_data/
 libs/
 python_libs/
 client-python/
+_lixo/
 
 
 # Arquivos de build do Docker (se existirem)

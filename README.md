@@ -55,7 +55,6 @@ Sistema de mensageria distribuída de alta performance, projetado para escalar h
 
 O sistema segue uma arquitetura orientada a eventos (EDA):
 
-```mermaid
 graph TD
     User((Usuário))
     
@@ -66,14 +65,14 @@ graph TD
     
     subgraph "Event Backbone & Storage"
         Kafka[(Apache Kafka)]
-        Redis[(Redis Pub/Sub)]
-        Cassandra[(Cassandra DB)]
-        Cockroach[(CockroachDB Metadata)]
-        MinIO[(MinIO Object Storage)]
+        Redis[("Redis Pub/Sub")]
+        Cassandra[("Cassandra DB")]
+        Cockroach[("CockroachDB Metadata")]
+        MinIO[("MinIO Object Storage")]
     end
     
     subgraph "Processing & Routing"
-        Worker[Router Worker (Scalable)]
+        Worker["Router Worker (Scalable)"]
     end
     
     subgraph "Connectors Layer"
@@ -97,8 +96,7 @@ graph TD
     Redis -->|Push| WS
     
     Kafka -->|Consume| Tele
-    Tele -->|API Call| TelegramCloud[Telegram API]
-```
+    Tele -->|API Call| TelegramCloud["Telegram API"]
 -----
 
 ## 🛠️ Stack Tecnológico
