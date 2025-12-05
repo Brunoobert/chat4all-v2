@@ -55,7 +55,6 @@ Sistema de mensageria distribuída de alta performance, projetado para escalar h
 
 O sistema segue uma arquitetura orientada a eventos (EDA):
 
-```mermaid
 graph TD
     User((Usuário))
     
@@ -68,6 +67,7 @@ graph TD
         Kafka[(Apache Kafka)]
         Redis[(Redis Pub/Sub)]
         Cassandra[(Cassandra DB)]
+        Cockroach[(CockroachDB Metadata)]
         MinIO[(MinIO Object Storage)]
     end
     
@@ -86,6 +86,7 @@ graph TD
     
     API -->|Produce| Kafka
     API -->|S3 Put| MinIO
+    API -.->|Auth/Meta| Cockroach
     
     Kafka -->|Consume| Worker
     Worker -->|Persist| Cassandra
@@ -96,7 +97,6 @@ graph TD
     
     Kafka -->|Consume| Tele
     Tele -->|API Call| TelegramCloud[Telegram API]
-```
 
 -----
 
@@ -107,6 +107,7 @@ graph TD
 | **Linguagem** | Python 3.10+ | FastAPI, Workers, Scripts |
 | **Broker** | Apache Kafka | Barramento de eventos e desacoplamento |
 | **NoSQL** | Apache Cassandra | Armazenamento de alta escrita (Chat Log) |
+| **SQL Distribuido** | CockroachDB | Gestão de Usuários e Metadados |
 | **Cache/PubSub** | Redis | Estado de Presença e Eventos Real-Time |
 | **Object Store** | MinIO | Compatível com S3 para arquivos grandes |
 | **Observabilidade** | Prometheus + Grafana | Métricas e Dashboards |
