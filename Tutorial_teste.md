@@ -9,7 +9,7 @@ Este guia explica como validar as funcionalidades principais do sistema utilizan
 
 1.  O ambiente deve estar rodando (`docker-compose up -d`).
 2.  Você deve ter o [Postman](https://www.postman.com/downloads/) instalado.
-3.  Os arquivos `demo_chat.html`, `demo_upload.html` e `postman_collection.json` devem estar na raiz do projeto.
+3.  Os arquivos `demo_chat.html`, `demo_upload.html` e `postman_collection.json` devem ser retirados da pasta teste e colocados na raiz do projeto.
 
 -----
 
@@ -29,10 +29,14 @@ A collection do Postman contém scripts que automatizam o fluxo de autenticaçã
 A collection está organizada em pastas lógicas. Recomenda-se executar na seguinte ordem:
 
 #### **Passo A: Autenticação (Obrigatório)**
-
+  * Vá na pasta `0. Configuração (Auth)` \> **Criar User**.
+  * Clique em **Send** 
+  * **O que acontece:** O sistema faz o registro do usuário admin e o salva no banco de dados 
   * Vá na pasta `0. Configuração (Auth)` \> **Login (Admin)**.
   * Clique em **Send**.
   * **O que acontece:** O sistema faz login e **salva automaticamente** o `access_token` nas variáveis de ambiente do Postman. Você não precisa copiar e colar nada manualmente.
+
+  * **OBS:** é preciso mudar para Bearer Token
 
 #### **Passo B: Chat Core**
 

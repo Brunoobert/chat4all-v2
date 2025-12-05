@@ -209,6 +209,3 @@ Acesse [http://localhost:8089](https://www.google.com/search?q=http://localhost:
 **Autores:** Bruno Evangelista Bertoldo - Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
 
 ````
-
----
-
