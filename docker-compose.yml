@@ -117,6 +117,8 @@ services:
     build:
       context: ./services/router_worker # 1. Aponta para a pasta do worker
     #container_name: router_worker_c
+    deploy:
+      replicas: 2
     depends_on:
       - kafka # 2. Só inicia depois do Kafka
       - cassandra-init        
@@ -249,6 +251,28 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+
+  connector_telegram:
+      build: ./services/connector_telegram
+      container_name: connector_telegram
+      depends_on:
+        kafka:
+          condition: service_started
+      environment:
+        - KAFKA_BROKER_URL=kafka:9092
+        - TELEGRAM_TOKEN=8578098550:AAEmwz6XaOdJrW4JXimxPqk5VNK0FHEmIu0 # <--- COLOQUE O TOKEN
+      networks:
+        - chat4all_net
+
+  jaeger:
+      image: jaegertracing/all-in-one:1.50
+      container_name: jaeger
+      ports:
+        - "16686:16686" # Interface Web
+        - "4317:4317"   # OTLP gRPC receiver
+      networks:
+        - chat4all_net
 
 # Definição dos volumes para persistir os dados
 volumes:

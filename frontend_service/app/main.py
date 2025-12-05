@@ -21,6 +21,19 @@ from prometheus_client import make_asgi_app, Counter, Gauge, Histogram
 import time
 from pydantic import BaseModel
 
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+
+# Configura OpenTelemetry
+resource = Resource.create({"service.name": "frontend_service"})
+trace.set_tracer_provider(TracerProvider(resource=resource))
+otlp_exporter = OTLPSpanExporter(endpoint="http://jaeger:4317", insecure=True)
+trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
+
 # Imports Locais
 from app.schemas import (
     User, Token, MessageIn, MessageResponse, 
@@ -163,6 +176,8 @@ async def lifespan(app: FastAPI):
 
 # --- APP SETUP ---
 app = FastAPI(title="Chat4All v2", version="0.2.0", lifespan=lifespan)
+
+FastAPIInstrumentor.instrument_app(app)
 
 # MÉTICAS DE NEGÓCIO (DIA 3)
 ACTIVE_WEBSOCKETS = Gauge('chat_active_websockets', 'Número de usuários conectados via WS')
