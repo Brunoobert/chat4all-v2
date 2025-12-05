@@ -1,60 +1,51 @@
-
-
-Aqui está o **README.md** definitivo e atualizado. Pode substituir o conteúdo do seu arquivo.
-
------
-
 # Chat4All v2 - Plataforma de Comunicação Ubíqua (Enterprise Edition)
 
 **Versão:** 1.1.0 (Final Release)
+**Data:** 05/12/2025
 
 Sistema de mensageria distribuída de alta performance, projetado para escalar horizontalmente e suportar comunicação em tempo real, uploads de arquivos gigantes e integração multi-canal. A arquitetura utiliza padrões de microsserviços, processamento assíncrono de eventos e observabilidade total.
 
 ## 📋 Índice
+- [Funcionalidades](#-funcionalidades)
+- [Arquitetura](#-arquitetura)
+- [Stack Tecnológico](#-stack-tecnológico)
+- [Pré-requisitos e Configuração](#-pré-requisitos-e-configuração)
+- [Instalação e Execução](#-instalação-e-execução)
+- [Demonstrações (Demos)](#-demonstrações-demos)
+- [Observabilidade e Testes](#-observabilidade-e-testes)
 
-  - [Funcionalidades](https://www.google.com/search?q=%23-funcionalidades)
-  - [Arquitetura](https://www.google.com/search?q=%23-arquitetura)
-  - [Stack Tecnológico](https://www.google.com/search?q=%23-stack-tecnol%C3%B3gico)
-  - [Pré-requisitos e Configuração](https://www.google.com/search?q=%23-pr%C3%A9-requisitos-e-configura%C3%A7%C3%A3o)
-  - [Instalação e Execução](https://www.google.com/search?q=%23-instala%C3%A7%C3%A3o-e-execu%C3%A7%C3%A3o)
-  - [Demonstrações (Demos)](https://www.google.com/search?q=%23-demonstra%C3%A7%C3%B5es-demos)
-  - [Observabilidade e Testes](https://www.google.com/search?q=%23-observabilidade-e-testes)
-
------
+---
 
 ## 🚀 Funcionalidades
 
 ### 💬 Mensageria & Tempo Real
-
-  - **Comunicação Híbrida:** Suporte a REST (assíncrono) e WebSocket (tempo real).
-  - **Redis Pub/Sub:** Entrega instantânea de mensagens para usuários conectados sem *polling*.
-  - **Roteamento Inteligente:** Despacho de mensagens para múltiplos canais (WhatsApp, Instagram, Telegram) baseado em regras de negócio.
-  - **Integração Real:** Conector funcional com **Telegram Bot API**.
+- **Comunicação Híbrida:** Suporte a REST (assíncrono) e WebSocket (tempo real).
+- **Redis Pub/Sub:** Entrega instantânea de mensagens para usuários conectados sem *polling*.
+- **Roteamento Inteligente:** Despacho de mensagens para múltiplos canais (WhatsApp, Instagram, Telegram) baseado em regras de negócio.
+- **Integração Real:** Conector funcional com **Telegram Bot API**.
 
 ### 📂 Gestão de Arquivos (Large Files)
-
-  - **Protocolo Resumable:** Upload segmentado (*Chunked*) permitindo arquivos de **2GB+**.
-  - **Storage Híbrido:** Processamento temporário de blocos e composição final no **MinIO (S3)**.
-  - **Assinatura Digital:** URLs de download seguras e temporárias (Presigned URLs).
+- **Protocolo Resumable:** Upload segmentado (*Chunked*) permitindo arquivos de **2GB+**.
+- **Storage Híbrido:** Processamento temporário de blocos e composição final no **MinIO (S3)**.
+- **Assinatura Digital:** URLs de download seguras e temporárias (Presigned URLs).
 
 ### ⚙️ Gestão e Integração (Gap Analysis)
-
-  - **Webhooks:** Registro de callbacks para sistemas externos.
-  - **Presence Service:** Monitoramento de status Online/Offline (Heartbeat).
-  - **User Channels:** Vínculo dinâmico de identificadores externos (telefone, @user).
+- **Webhooks:** Registro de callbacks para sistemas externos.
+- **Presence Service:** Monitoramento de status Online/Offline (Heartbeat).
+- **User Channels:** Vínculo dinâmico de identificadores externos (telefone, @user).
 
 ### 🛡️ Resiliência e Operação
+- **Alta Disponibilidade:** Workers escaláveis horizontalmente.
+- **Zero Data Loss:** Persistência durável em Cassandra e Kafka.
+- **Observabilidade:** Dashboards métricos e Tracing distribuído.
 
-  - **Alta Disponibilidade:** Workers escaláveis horizontalmente.
-  - **Zero Data Loss:** Persistência durável em Cassandra e Kafka.
-  - **Observabilidade:** Dashboards métricos e Tracing distribuído.
-
------
+---
 
 ## 🏗️ Arquitetura
 
 O sistema segue uma arquitetura orientada a eventos (EDA):
 
+```mermaid
 graph TD
     User((Usuário))
     
@@ -97,6 +88,8 @@ graph TD
     
     Kafka -->|Consume| Tele
     Tele -->|API Call| TelegramCloud["Telegram API"]
+````
+
 -----
 
 ## 🛠️ Stack Tecnológico
@@ -106,7 +99,7 @@ graph TD
 | **Linguagem** | Python 3.10+ | FastAPI, Workers, Scripts |
 | **Broker** | Apache Kafka | Barramento de eventos e desacoplamento |
 | **NoSQL** | Apache Cassandra | Armazenamento de alta escrita (Chat Log) |
-| **SQL Distribuido** | CockroachDB | Gestão de Usuários e Metadados |
+| **SQL Distribuído** | CockroachDB | Gestão de Usuários e Metadados |
 | **Cache/PubSub** | Redis | Estado de Presença e Eventos Real-Time |
 | **Object Store** | MinIO | Compatível com S3 para arquivos grandes |
 | **Observabilidade** | Prometheus + Grafana | Métricas e Dashboards |
@@ -214,3 +207,8 @@ Acesse [http://localhost:8089](https://www.google.com/search?q=http://localhost:
 -----
 
 **Autores:** Bruno Evangelista Bertoldo - Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
+
+````
+
+---
+
