@@ -55,6 +55,7 @@ Sistema de mensageria distribuída de alta performance, projetado para escalar h
 
 O sistema segue uma arquitetura orientada a eventos (EDA):
 
+```mermaid
 graph TD
     User((Usuário))
     
@@ -97,7 +98,7 @@ graph TD
     
     Kafka -->|Consume| Tele
     Tele -->|API Call| TelegramCloud[Telegram API]
-
+```
 -----
 
 ## 🛠️ Stack Tecnológico

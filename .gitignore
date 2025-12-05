@@ -24,6 +24,11 @@ minio_data/
 zookeeper_data/
 zookeeper_log/
 grafana_data/
+libs/
+python_libs/
+client-python/
+
+
 # Arquivos de build do Docker (se existirem)
 .dockerignore
 
