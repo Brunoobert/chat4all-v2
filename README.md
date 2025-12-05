@@ -1,209 +1,216 @@
-Com certeza\! O seu README já está ótimo, mas para refletir a realidade atual do projeto (com MinIO, Connectors e Status Completo), precisamos atualizar algumas seções chave.
 
-Aqui está o **README.md** completo e atualizado. Copie e substitua o seu arquivo atual.
+
+Aqui está o **README.md** definitivo e atualizado. Pode substituir o conteúdo do seu arquivo.
 
 -----
 
-# Chat4All v2 - Sistema de Mensageria Distribuída
+# Chat4All v2 - Plataforma de Comunicação Ubíqua (Enterprise Edition)
 
-Sistema de chat distribuído baseado em microsserviços, projetado para alta escalabilidade e resiliência. A arquitetura utiliza processamento de eventos (Kafka), persistência poliglota (Cassandra + CockroachDB) e armazenamento de objetos (MinIO), simulando um ambiente de produção real com integração externa (WhatsApp/Instagram).
+**Versão:** 1.1.0 (Final Release)
+
+Sistema de mensageria distribuída de alta performance, projetado para escalar horizontalmente e suportar comunicação em tempo real, uploads de arquivos gigantes e integração multi-canal. A arquitetura utiliza padrões de microsserviços, processamento assíncrono de eventos e observabilidade total.
 
 ## 📋 Índice
 
-  - [Visão Geral](https://www.google.com/search?q=%23vis%C3%A3o-geral)
-  - [Arquitetura](https://www.google.com/search?q=%23arquitetura)
-  - [Tecnologias](https://www.google.com/search?q=%23tecnologias)
-  - [Estrutura do Projeto](https://www.google.com/search?q=%23estrutura-do-projeto)
-  - [Serviços](https://www.google.com/search?q=%23servi%C3%A7os)
-  - [Instalação e Execução](https://www.google.com/search?q=%23instala%C3%A7%C3%A3o-e-execu%C3%A7%C3%A3o)
-  - [Fluxo de Mensagens](https://www.google.com/search?q=%23fluxo-de-mensagens)
-  - [Endpoints da API](https://www.google.com/search?q=%23endpoints-da-api)
-  - [Configuração](https://www.google.com/search?q=%23configura%C3%A7%C3%A3o)
-  - [Troubleshooting](https://www.google.com/search?q=%23troubleshooting)
-
-## 🎯 Visão Geral
-
-O Chat4All implementa uma arquitetura orientada a eventos onde a API de entrada apenas enfileira solicitações, garantindo alta disponibilidade. Workers em background processam as mensagens, salvam no banco e roteiam para conectores externos, completando o ciclo de vida da mensagem (`SENT` → `DELIVERED` → `READ`).
-
-### Características Principais
-
-  - **Arquitetura de Microsserviços**: Separação clara de responsabilidades.
-  - **Mensageria Assíncrona**: Apache Kafka para desacoplamento total.
-  - **Persistência Poliglota**:
-      - **Cassandra**: Histórico de chat (alta escrita).
-      - **CockroachDB**: Dados de usuários e metadados (transacional).
-      - **MinIO (S3)**: Armazenamento de arquivos (imagens, documentos).
-  - **Integração Externa Mock**: Simuladores de WhatsApp e Instagram.
-  - **Autenticação JWT**: Segurança via tokens.
-  - **Containerização Completa**: Docker Compose orquestrando 9 serviços.
-
-## 🏗️ Arquitetura
-
-```mermaid
-graph TD
-    Client[Cliente HTTP] -->|POST /messages| API[Frontend Service]
-    Client -->|POST /upload| API
-    API -->|Produce| Kafka[(Kafka)]
-    API -->|Upload| MinIO[(MinIO S3)]
-    
-    Kafka -->|Consume| Worker[Router Worker]
-    
-    Worker -->|Insert| Cassandra[(Cassandra)]
-    Worker -->|Route| KafkaOut[(Kafka Topics Out)]
-    
-    KafkaOut -->|Consume| ConnectorWA[Connector WhatsApp]
-    KafkaOut -->|Consume| ConnectorIG[Connector Instagram]
-    
-    ConnectorWA -->|Webhook READ| API
-    ConnectorIG -->|Webhook READ| API
-    
-    API -.->|Auth Check| Metadata[Metadata Service]
-    Metadata -.->|SQL| Cockroach[(CockroachDB)]
-```
-
-## 🛠️ Tecnologias
-
-### Backend
-
-  - **Python 3.11**: Linguagem base.
-  - **FastAPI**: API Gateway e Metadata Service.
-  - **Kafka-Python**: Produtores e Consumidores.
-  - **Cassandra Driver**: Conexão NoSQL.
-  - **SQLAlchemy**: ORM para CockroachDB.
-  - **Boto3**: Cliente S3 para MinIO.
-  - **Pydantic**: Validação de dados.
-
-### Infraestrutura
-
-  - **Docker Compose**: Orquestração.
-  - **Apache Kafka + Zookeeper**: Event Bus.
-  - **Apache Cassandra**: Chat Log Store.
-  - **CockroachDB**: User Store.
-  - **MinIO**: Object Storage.
-
-## 📁 Estrutura do Projeto
-
-```
-Chat4All/
-├── docker-compose.yml          # Definição da infraestrutura
-├── services/
-│   ├── frontend_service/       # API Principal (Msg + Upload)
-│   │   ├── app/
-│   │   │   ├── main.py         # Endpoints
-│   │   │   ├── s3.py           # Integração MinIO
-│   │   │   └── producer.py     # Kafka Producer
-│   ├── router_worker/          # Worker Central (Router + DB)
-│   ├── metadata_service/       # API de Usuários (CockroachDB)
-│   ├── connector_whatsapp/     # Mock de Integração
-│   └── connector_instagram/    # Mock de Integração
-```
-
-## 🔧 Serviços e Portas
-
-| Serviço | Porta Host | Descrição |
-| :--- | :--- | :--- |
-| **Frontend API** | `8000` | API Principal (Mensagens, Arquivos). |
-| **Metadata API** | `8001` | API de Gestão de Usuários. |
-| **MinIO Console** | `9001` | Painel Admin de Arquivos (User/Pass: `minioadmin`). |
-| **MinIO API** | `9000` | Endpoint S3. |
-| **CockroachDB UI** | `8080` | Painel do Banco SQL. |
-| **Cassandra** | `9042` | Banco NoSQL. |
-| **Kafka** | `29092` | Broker (Acesso externo). |
-
-## 🚀 Instalação e Execução
-
-### 1\. Iniciar o Ecossistema
-
-```bash
-# Sobe toda a infraestrutura e constrói os serviços Python
-docker-compose up -d --build
-```
-
-### 2\. Configurar o Banco de Dados (Apenas 1ª vez)
-
-O Cassandra precisa da tabela criada manualmente (pois o script automático é complexo de sincronizar).
-
-```bash
-docker-compose exec cassandra cqlsh -e "
-CREATE KEYSPACE IF NOT EXISTS chat4all_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'};
-USE chat4all_ks;
-CREATE TABLE IF NOT EXISTS messages (
-    conversation_id uuid,
-    message_id uuid,
-    sender_id text,
-    content text,
-    status text,
-    created_at timestamp,
-    type text,
-    file_id text,
-    PRIMARY KEY (conversation_id, message_id)
-) WITH CLUSTERING ORDER BY (message_id DESC);"
-```
-
-### 3\. Reiniciar Workers (Para pegar a tabela nova)
-
-```bash
-docker-compose restart router_worker frontend_service
-```
-
-## 📨 Fluxo de Mensagens (Ciclo de Vida)
-
-1.  **SENT**: API recebe, salva arquivo no MinIO (se houver), publica no Kafka `chat_messages`.
-2.  **DELIVERED**: Worker consome, define tipo (texto/arquivo), salva no Cassandra e roteia para o tópico de saída (`whatsapp_outbound` ou `instagram_outbound`).
-3.  **READ**: Connector consome, simula envio externo e chama webhook `PATCH /status` na API, que atualiza o Cassandra.
-
-## 🔌 Endpoints Principais
-
-### 1\. Autenticação
-
-**POST** `/token`
-
-  * Body: `username=bruno`, `password=test`
-  * Retorna: `access_token`
-
-### 2\. Upload de Arquivo
-
-**POST** `/v1/files/upload`
-
-  * Header: `Authorization: Bearer <token>`
-  * Body (form-data): `file` (Arquivo binário)
-  * Retorna: `file_id`, `download_url`
-
-### 3\. Enviar Mensagem
-
-**POST** `/v1/messages`
-
-  * Header: `Authorization: Bearer <token>`
-  * Body (JSON):
-    ```json
-    {
-      "chat_id": "uuid-da-conversa",
-      "content": "@maria veja a foto",
-      "file_id": "uuid-do-arquivo-opcional"
-    }
-    ```
-      * *Dica:* Se começar com `@`, vai para o Instagram Mock.
-
-### 4\. Histórico
-
-**GET** `/v1/conversations/{id}/messages`
-
-  * Retorna lista completa com status atualizado (`READ`).
-
-## ⚙️ Desenvolvimento Local
-
-Para rodar sem Docker (apenas Python local conectando na infra Docker):
-
-1.  **Infra:** `docker-compose up -d zookeeper kafka cassandra cockroachdb minio`
-2.  **Env Vars:** Configure `.env` para apontar para `localhost` (ex: `KAFKA_BROKER_URL=localhost:29092`).
-3.  **Install:** `pip install -r requirements.txt`
-4.  **Run:** `uvicorn app.main:app --reload --port 8000`
+  - [Funcionalidades](https://www.google.com/search?q=%23-funcionalidades)
+  - [Arquitetura](https://www.google.com/search?q=%23-arquitetura)
+  - [Stack Tecnológico](https://www.google.com/search?q=%23-stack-tecnol%C3%B3gico)
+  - [Pré-requisitos e Configuração](https://www.google.com/search?q=%23-pr%C3%A9-requisitos-e-configura%C3%A7%C3%A3o)
+  - [Instalação e Execução](https://www.google.com/search?q=%23-instala%C3%A7%C3%A3o-e-execu%C3%A7%C3%A3o)
+  - [Demonstrações (Demos)](https://www.google.com/search?q=%23-demonstra%C3%A7%C3%B5es-demos)
+  - [Observabilidade e Testes](https://www.google.com/search?q=%23-observabilidade-e-testes)
 
 -----
 
-**Autores:** Bruno Evangelista Bertoldo -  Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
+## 🚀 Funcionalidades
 
-**Última atualização:** 24/11/2025
+### 💬 Mensageria & Tempo Real
 
+  - **Comunicação Híbrida:** Suporte a REST (assíncrono) e WebSocket (tempo real).
+  - **Redis Pub/Sub:** Entrega instantânea de mensagens para usuários conectados sem *polling*.
+  - **Roteamento Inteligente:** Despacho de mensagens para múltiplos canais (WhatsApp, Instagram, Telegram) baseado em regras de negócio.
+  - **Integração Real:** Conector funcional com **Telegram Bot API**.
 
+### 📂 Gestão de Arquivos (Large Files)
 
+  - **Protocolo Resumable:** Upload segmentado (*Chunked*) permitindo arquivos de **2GB+**.
+  - **Storage Híbrido:** Processamento temporário de blocos e composição final no **MinIO (S3)**.
+  - **Assinatura Digital:** URLs de download seguras e temporárias (Presigned URLs).
+
+### ⚙️ Gestão e Integração (Gap Analysis)
+
+  - **Webhooks:** Registro de callbacks para sistemas externos.
+  - **Presence Service:** Monitoramento de status Online/Offline (Heartbeat).
+  - **User Channels:** Vínculo dinâmico de identificadores externos (telefone, @user).
+
+### 🛡️ Resiliência e Operação
+
+  - **Alta Disponibilidade:** Workers escaláveis horizontalmente.
+  - **Zero Data Loss:** Persistência durável em Cassandra e Kafka.
+  - **Observabilidade:** Dashboards métricos e Tracing distribuído.
+
+-----
+
+## 🏗️ Arquitetura
+
+O sistema segue uma arquitetura orientada a eventos (EDA):
+
+```mermaid
+graph TD
+    User((Usuário))
+    
+    subgraph "Frontend & API Layer"
+        API[Frontend Service]
+        WS[WebSocket Handler]
+    end
+    
+    subgraph "Event Backbone & Storage"
+        Kafka[(Apache Kafka)]
+        Redis[(Redis Pub/Sub)]
+        Cassandra[(Cassandra DB)]
+        MinIO[(MinIO Object Storage)]
+    end
+    
+    subgraph "Processing & Routing"
+        Worker[Router Worker (Scalable)]
+    end
+    
+    subgraph "Connectors Layer"
+        Tele[Telegram Connector]
+        Meta[WhatsApp/Instagram Mock]
+    end
+
+    User -->|REST POST| API
+    User <-->|WebSocket| WS
+    User -->|Upload Chunks| API
+    
+    API -->|Produce| Kafka
+    API -->|S3 Put| MinIO
+    
+    Kafka -->|Consume| Worker
+    Worker -->|Persist| Cassandra
+    Worker -->|Notify| Redis
+    Worker -->|Route| Kafka
+    
+    Redis -->|Push| WS
+    
+    Kafka -->|Consume| Tele
+    Tele -->|API Call| TelegramCloud[Telegram API]
+```
+
+-----
+
+## 🛠️ Stack Tecnológico
+
+| Categoria | Tecnologia | Uso Principal |
+| :--- | :--- | :--- |
+| **Linguagem** | Python 3.10+ | FastAPI, Workers, Scripts |
+| **Broker** | Apache Kafka | Barramento de eventos e desacoplamento |
+| **NoSQL** | Apache Cassandra | Armazenamento de alta escrita (Chat Log) |
+| **Cache/PubSub** | Redis | Estado de Presença e Eventos Real-Time |
+| **Object Store** | MinIO | Compatível com S3 para arquivos grandes |
+| **Observabilidade** | Prometheus + Grafana | Métricas e Dashboards |
+| **Tracing** | Jaeger + OpenTelemetry | Rastreamento de requisições distribuídas |
+| **Testes** | Locust | Teste de carga distribuído |
+
+-----
+
+## ⚙️ Pré-requisitos e Configuração
+
+### 1\. Configurar Host (Para MinIO Local)
+
+Para que os links de download funcionem no navegador, adicione esta entrada no seu arquivo `hosts` (Windows: `C:\Windows\System32\drivers\etc\hosts`):
+
+```text
+127.0.0.1 minio
+```
+
+### 2\. Configurar Token do Telegram (Opcional)
+
+No arquivo `docker-compose.yml`, edite a variável `TELEGRAM_TOKEN` no serviço `connector_telegram` com o token obtido no @BotFather.
+
+-----
+
+## 🚀 Instalação e Execução
+
+### 1\. Subir o Ambiente
+
+```bash
+docker-compose up --build -d
+```
+
+*Aguarde alguns minutos para o Cassandra e Kafka inicializarem completamente.*
+
+### 2\. Inicializar Banco de Dados (Schema)
+
+Execute este comando para criar todas as tabelas necessárias no Cassandra:
+
+```bash
+docker exec cassandra cqlsh -e "
+CREATE KEYSPACE IF NOT EXISTS chat4all_ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'};
+USE chat4all_ks;
+
+-- Core
+CREATE TABLE IF NOT EXISTS messages (conversation_id uuid, message_id uuid, sender_id text, content text, status text, created_at timestamp, type text, file_id text, channels list<text>, PRIMARY KEY (conversation_id, message_id)) WITH CLUSTERING ORDER BY (message_id DESC);
+CREATE TABLE IF NOT EXISTS conversations (conversation_id uuid PRIMARY KEY, type text, members list<text>, metadata map<text,text>, created_at timestamp);
+
+-- Uploads
+CREATE TABLE IF NOT EXISTS file_uploads (file_id uuid PRIMARY KEY, filename text, total_size bigint, chunk_size int, total_chunks int, uploaded_chunks set<int>, status text, upload_url text, owner_id text, created_at timestamp);
+CREATE TABLE IF NOT EXISTS files (file_id uuid PRIMARY KEY, owner_id text, filename text, size bigint, content_type text, minio_path text, created_at timestamp);
+
+-- Gap Analysis
+CREATE TABLE IF NOT EXISTS webhooks (user_id text, webhook_id uuid, url text, events list<text>, secret text, created_at timestamp, PRIMARY KEY (user_id, webhook_id));
+CREATE TABLE IF NOT EXISTS user_channels (user_id text, channel_type text, identifier text, created_at timestamp, PRIMARY KEY (user_id, channel_type));
+CREATE TABLE IF NOT EXISTS user_presence (user_id text PRIMARY KEY, status text, last_seen timestamp);
+"
+```
+
+-----
+
+## 🖥️ Demonstrações (Demos)
+
+O projeto inclui interfaces web para facilitar a demonstração das funcionalidades complexas.
+
+### 1\. Chat Real-Time (`demo_chat.html`)
+
+  * Abra o arquivo no navegador.
+  * Insira um Token JWT (gere via Postman `/token`) e um ID de Conversa.
+  * Conecte e envie mensagens.
+  * **Prova de Valor:** Recebe mensagens enviadas por outros clientes instantaneamente via WebSocket.
+
+### 2\. Upload Gigante (`demo_upload.html`)
+
+  * Abra no navegador.
+  * Insira o Token JWT.
+  * Selecione um arquivo grande (ex: 500MB).
+  * **Prova de Valor:** Visualização da barra de progresso enviando *chunks* de 5MB sem travar o navegador ou o servidor.
+
+-----
+
+## 📊 Observabilidade e Testes
+
+### Acessos Administrativos
+
+  * **API Swagger:** [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
+  * **Grafana:** [http://localhost:3000](https://www.google.com/search?q=http://localhost:3000) (Login: `admin` / `admin`)
+      * *Dashboard:* Importe o JSON fornecido para ver métricas de Upload e WS.
+  * **Jaeger UI:** [http://localhost:16686](https://www.google.com/search?q=http://localhost:16686) (Tracing)
+  * **MinIO Console:** [http://localhost:9001](https://www.google.com/search?q=http://localhost:9001) (Login: `minioadmin` / `minioadmin`)
+
+### Teste de Carga (Stress Test)
+
+Para validar a estabilidade sob pressão:
+
+```bash
+# Instalar Locust
+pip install locust
+
+# Iniciar Swarm
+locust -f locustfile.py --host=http://localhost:8000
+```
+
+Acesse [http://localhost:8089](https://www.google.com/search?q=http://localhost:8089) e inicie com 50 usuários.
+
+-----
+
+**Autores:** Bruno Evangelista Bertoldo - Augusto Arantes Chaves - Enzo Alvarez Dias - Matheus Pereira Figueredo
