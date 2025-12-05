@@ -96,6 +96,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# --- NOVOS SCHEMAS (GAP ANALYSIS) ---
+class WebhookCreate(BaseModel):
+    url: str
+    events: List[str] = ["message.delivered", "message.read"]
+    secret: str
+
+class ChannelLink(BaseModel):
+    channel_type: str # whatsapp, instagram
+    identifier: str   # +556299..., @usuario
+    
+class PresenceUpdate(BaseModel):
+    status: str # online, offline, busy
+
 # --- LISTENER REDIS (Background) ---
 async def redis_listener():
     logger.info("Iniciando Redis Listener...")
@@ -328,3 +341,77 @@ def get_history(conversation_id: uuid.UUID, current_user: User = Depends(get_cur
     if not cassandra_session: raise HTTPException(503, "DB Offline")
     rows = cassandra_session.execute("SELECT * FROM messages WHERE conversation_id = %s", (conversation_id,))
     return list(rows)
+
+# ==========================================
+# GAP ANALYSIS - FUNCIONALIDADES EXTRAS
+# ==========================================
+
+# --- 1. WEBHOOKS (RF-2.5.2) ---
+@app.post("/v1/webhooks", status_code=201, tags=["Integrations"])
+def register_webhook(webhook: WebhookCreate, current_user: User = Depends(get_current_user)):
+    """Registra uma URL externa para receber notificações de eventos."""
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    
+    wid = uuid.uuid4()
+    query = """
+        INSERT INTO webhooks (user_id, webhook_id, url, events, secret, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """
+    cassandra_session.execute(query, (
+        current_user.username, wid, webhook.url, webhook.events, webhook.secret, datetime.now()
+    ))
+    return {"webhook_id": wid, "message": "Webhook registrado com sucesso"}
+
+@app.get("/v1/webhooks", tags=["Integrations"])
+def list_webhooks(current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    rows = cassandra_session.execute("SELECT * FROM webhooks WHERE user_id = %s", (current_user.username,))
+    return list(rows)
+
+# --- 2. MAPEAMENTO DE CANAIS (RF-2.3.3) ---
+@app.post("/v1/users/channels", tags=["Users"])
+def link_channel(channel: ChannelLink, current_user: User = Depends(get_current_user)):
+    """Vincula um telefone (WhatsApp) ou @ (Instagram) ao usuário."""
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    
+    query = """
+        INSERT INTO user_channels (user_id, channel_type, identifier, created_at)
+        VALUES (%s, %s, %s, %s)
+    """
+    cassandra_session.execute(query, (
+        current_user.username, channel.channel_type, channel.identifier, datetime.now()
+    ))
+    return {"status": "linked", "channel": channel.channel_type, "id": channel.identifier}
+
+@app.get("/v1/users/channels", tags=["Users"])
+def get_channels(current_user: User = Depends(get_current_user)):
+    if not cassandra_session: raise HTTPException(503, "DB Offline")
+    rows = cassandra_session.execute("SELECT * FROM user_channels WHERE user_id = %s", (current_user.username,))
+    return list(rows)
+
+# --- 3. PRESENCE SERVICE (RF-2.1.13) ---
+@app.post("/v1/presence/heartbeat", tags=["Presence"])
+async def heartbeat(presence: PresenceUpdate, current_user: User = Depends(get_current_user)):
+    """Endpoint chamado pelo Frontend a cada 30s para dizer 'Estou Online'."""
+    # Atualiza no Redis (Rápido + TTL)
+    if redis_client:
+        key = f"user:presence:{current_user.username}"
+        await redis_client.set(key, presence.status, ex=60) # Expira em 60s se não renovar
+    
+    # Atualiza no Cassandra (Histórico/Persistência)
+    if cassandra_session:
+        cassandra_session.execute(
+            "INSERT INTO user_presence (user_id, status, last_seen) VALUES (%s, %s, %s)",
+            (current_user.username, presence.status, datetime.now())
+        )
+    return {"status": "updated"}
+
+@app.get("/v1/presence/{username}", tags=["Presence"])
+async def get_presence(username: str, current_user: User = Depends(get_current_user)):
+    status = "offline"
+    if redis_client:
+        val = await redis_client.get(f"user:presence:{username}")
+        if val: status = val
+    return {"username": username, "status": status}
+
+    
