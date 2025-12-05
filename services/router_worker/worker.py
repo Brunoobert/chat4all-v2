@@ -9,7 +9,8 @@ from prometheus_client import start_http_server, Counter
 import redis
 
 # Métricas
-MESSAGES_PROCESSED = Counter('worker_messages_processed_total', 'Msgs processadas', ['status'])
+MESSAGES_PROCESSED = Counter('worker_messages_processed', 'Msgs processadas', ['status'])
+REALTIME_EVENTS = Counter('worker_realtime_events_total', 'Eventos enviados ao Redis') # [DIA 3]
 
 # Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [WORKER] - %(levelname)s - %(message)s')
@@ -116,11 +117,11 @@ def process_messages():
                             }
 
                             for member in members:
-                                # if member != data['sender_id']: <--- COMENTADO PARA TESTE
                                 event = ws_payload.copy()
                                 event["to_user"] = member
-                                
                                 redis_client.publish("chat_events", json.dumps(event))
+
+                                REALTIME_EVENTS.inc() # [DIA 3] Conta notificação
                                 logger.info(f"⚡ REAL-TIME: Enviado para Redis -> {member}")
 
                     except Exception as redis_error:

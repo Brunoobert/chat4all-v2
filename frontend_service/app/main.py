@@ -17,7 +17,8 @@ from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, H
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi.security import OAuth2PasswordRequestForm
-from prometheus_client import make_asgi_app
+from prometheus_client import make_asgi_app, Counter, Gauge, Histogram
+import time
 from pydantic import BaseModel
 
 # Imports Locais
@@ -69,22 +70,29 @@ class ConnectionManager:
         if user_id not in self.active_connections:
             self.active_connections[user_id] = []
         self.active_connections[user_id].append(websocket)
+
+        # [DIA 3] Incrementa métrica
+        ACTIVE_WEBSOCKETS.inc() 
         logger.info(f"WS: Usuário {user_id} conectado.")
 
     def disconnect(self, websocket: WebSocket, user_id: str):
         if user_id in self.active_connections:
             if websocket in self.active_connections[user_id]:
                 self.active_connections[user_id].remove(websocket)
+                # [DIA 3] Decrementa métrica
+                ACTIVE_WEBSOCKETS.dec()
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
 
+    # Dentro da classe ConnectionManager:
     async def send_personal_message(self, message: str, user_id: str):
         if user_id in self.active_connections:
+            # Envia para todas as conexões ativas desse usuário (ex: PC e Celular)
             for connection in self.active_connections[user_id]:
                 try:
                     await connection.send_text(message)
                 except Exception:
-                    pass 
+                    pass # Ignora erro se o socket já fechou
 
 manager = ConnectionManager()
 
@@ -143,6 +151,35 @@ async def lifespan(app: FastAPI):
 # --- APP SETUP ---
 app = FastAPI(title="Chat4All v2", version="0.2.0", lifespan=lifespan)
 
+# MÉTICAS DE NEGÓCIO (DIA 3)
+ACTIVE_WEBSOCKETS = Gauge('chat_active_websockets', 'Número de usuários conectados via WS')
+UPLOAD_CHUNKS_RECEIVED = Counter('chat_upload_chunks_total', 'Chunks de arquivos recebidos')
+UPLOAD_COMPLETED = Counter('chat_uploads_completed_total', 'Uploads finalizados com sucesso')
+
+REQUESTS_TOTAL = Counter("http_requests_total", "Total reqs", ["method", "endpoint", "status"])
+REQUEST_LATENCY = Histogram("http_request_duration_seconds", "Latencia")
+
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception as e:
+        status_code = 500
+        raise e
+    finally:
+        process_time = time.time() - start_time
+        # Filtra rotas de monitoramento para não sujar as métricas
+        if "/metrics" not in request.url.path and "/status" not in request.url.path:
+            REQUEST_LATENCY.observe(process_time)
+            REQUESTS_TOTAL.labels(
+                method=request.method, 
+                endpoint=request.url.path, 
+                status=status_code
+            ).inc()
+
 # CORS (Importante para o Demo HTML)
 app.add_middleware(
     CORSMiddleware,
@@ -197,6 +234,10 @@ async def upload_chunk(file_id: uuid.UUID, chunk_index: int = Form(...), file: U
     
     if cassandra_session:
         cassandra_session.execute("UPDATE file_uploads SET uploaded_chunks = uploaded_chunks + {%s} WHERE file_id = %s", (chunk_index, file_id))
+    
+
+    UPLOAD_CHUNKS_RECEIVED.inc()
+
     return {"status": "chunk_received", "index": chunk_index}
 
 @app.post("/v1/files/{file_id}/complete", response_model=FileCompleteResponse)
@@ -213,6 +254,7 @@ def complete_upload(file_id: uuid.UUID, current_user: User = Depends(get_current
         download_url = compose_final_file(str(file_id), row['filename'], row['total_chunks'])
         cassandra_session.execute("INSERT INTO files (file_id, owner_id, filename, size, minio_path, created_at) VALUES (%s, %s, %s, %s, %s, %s)", (file_id, current_user.username, row['filename'], row['total_size'], f"uploads/{file_id}", datetime.now()))
         cassandra_session.execute("UPDATE file_uploads SET status = 'COMPLETED' WHERE file_id = %s", (file_id,))
+        UPLOAD_COMPLETED.inc() # [DIA 3] Conta +1 arquivo pronto
         return {"file_id": file_id, "download_url": download_url, "message": "Sucesso!"}
     except Exception as e:
         logger.error(f"Erro compose: {e}")

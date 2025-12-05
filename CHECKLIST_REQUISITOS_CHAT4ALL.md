@@ -34,30 +34,30 @@
 
 #### ✅ Envio de Arquivos até 2GB
 - [x] **RF-2.1.8**: Upload básico para MinIO já existe (✅ OK)
-- [ ] **RF-2.1.9**: Implementar **chunked upload resumable** (protocolo tipo tus ou S3 multipart)
-  - `POST /v1/files/initiate` → retorna `upload_url` (presigned), `file_id`, `chunk_size`
-  - `PATCH /v1/files/{file_id}/chunk` → upload de chunk individual (com offset)
-  - `POST /v1/files/{file_id}/complete` → finaliza upload com checksum
-  - Armazenar manifest de chunks no DB (metadados: `file_id`, `total_size`, `chunks[]`, `checksum`)
+- [x] **RF-2.1.9**: Implementar **chunked upload resumable** (protocolo tipo tus ou S3 multipart) (⚠️ PARCIAL)
+  - `POST /v1/files/initiate` → retorna `upload_url` (presigned), `file_id`, `chunk_size` - ✅ Implementado
+  - `PATCH /v1/files/{file_id}/chunk` → upload de chunk individual (com offset) - ❌ Falta implementar
+  - `POST /v1/files/{file_id}/complete` → finaliza upload com checksum - ❌ Falta implementar
+  - Armazenar manifest de chunks no DB (metadados: `file_id`, `total_size`, `chunks[]`, `checksum`) - ⚠️ Parcial
 
 - [ ] **RF-2.1.10**: Validar tamanho máximo de 2GB no endpoint de initiate
 - [ ] **RF-2.1.11**: Implementar lógica de resume (verificar chunks já enviados e continuar)
 
 #### ✅ Recepção em Tempo Real / Entrega Retardada
-- [ ] **RF-2.1.12**: Implementar **WebSocket endpoint** para clientes internos conectados
-  - `WS /v1/ws` com autenticação via token
-  - Enviar mensagens em tempo real quando destinatário está online
-  - Manter conexão ativa e heartbeat
+- [x] **RF-2.1.12**: Implementar **WebSocket endpoint** para clientes internos conectados (✅ OK)
+  - `WS /ws` com autenticação via token - ✅ Implementado
+  - Enviar mensagens em tempo real quando destinatário está online - ✅ Implementado via Redis
+  - Manter conexão ativa e heartbeat - ✅ Implementado
 
 - [ ] **RF-2.1.13**: Implementar **Presence Service** (rastreia quem está online)
   - Endpoint: `POST /v1/presence/heartbeat` (chamado periodicamente pelo cliente)
   - Armazenar em cache (Redis) ou DB: `user_id` → `last_seen`, `status` (online/offline)
   - Endpoint: `GET /v1/presence/{user_id}` para consultar status
 
-- [ ] **RF-2.1.14**: Implementar lógica de **store-and-forward** no router_worker
-  - Se destinatário está offline → persistir em Cassandra (já faz)
-  - Se destinatário está online → enviar via WebSocket (novo)
-  - Quando usuário volta online, consultar mensagens pendentes e entregar
+- [x] **RF-2.1.14**: Implementar lógica de **store-and-forward** no router_worker (✅ PARCIAL)
+  - Se destinatário está offline → persistir em Cassandra (✅ já faz)
+  - Se destinatário está online → enviar via WebSocket (✅ implementado via Redis)
+  - Quando usuário volta online, consultar mensagens pendentes e entregar - ⚠️ Falta lógica de consulta de pendentes
 
 ---
 
@@ -89,12 +89,12 @@
 ### 2.3 Multiplataforma e Roteamento por Canal
 
 #### ✅ Seleção de Canais
-- [ ] **RF-2.3.1**: Modificar `POST /v1/messages` para aceitar campo `channels`
-  - Body deve aceitar: `"channels": ["whatsapp", "instagram"]` ou `"channels": ["all"]`
-  - Validar que canais são suportados (lista de canais disponíveis)
+- [x] **RF-2.3.1**: Modificar `POST /v1/messages` para aceitar campo `channels` (✅ OK)
+  - Body aceita: `"channels": ["whatsapp", "instagram"]` ou `"channels": ["all"]` - ✅ Schema implementado
+  - Validar que canais são suportados (lista de canais disponíveis) - ⚠️ Falta validação
 
 - [ ] **RF-2.3.2**: Modificar `router_worker` para rotear baseado em `channels` (não heurística de `@`)
-  - Ler campo `channels` do payload Kafka
+  - Ler campo `channels` do payload Kafka - ⚠️ Campo existe no schema, mas roteamento ainda usa heurística
   - Se `["all"]` → enviar para todos os tópicos de connectors disponíveis
   - Se lista específica → enviar apenas para tópicos correspondentes (`whatsapp_outbound`, `instagram_outbound`, etc.)
 
@@ -420,8 +420,8 @@
 - [x] **ARQ-6**: Metadata DB (CockroachDB) - ✅ Implementado (OK)
 - [x] **ARQ-7**: Message Store (Cassandra) - ✅ Implementado (OK)
 - [x] **ARQ-8**: Object Storage (MinIO) - ✅ Implementado (OK)
-- [ ] **ARQ-9**: Notification / Push Service - ⚠️ Parcial (WebSocket não implementado)
-- [ ] **ARQ-10**: Presence Service - ⚠️ Não implementado
+- [x] **ARQ-9**: Notification / Push Service - ✅ Implementado (WebSocket + Redis)
+- [ ] **ARQ-10**: Presence Service - ⚠️ Não implementado (falta endpoints de heartbeat)
 - [x] **ARQ-11**: Admin & Monitoring (Prometheus/Grafana) - ✅ Implementado (OK)
 
 ---
@@ -562,5 +562,6 @@
 ---
 
 **Última atualização**: Baseado na análise do código em `frontend_service/`, `services/`, `docker-compose.yml` e requisitos do PDF.
+
 
 

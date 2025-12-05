@@ -206,3 +206,4 @@ Para rodar sem Docker (apenas Python local conectando na infra Docker):
 **Última atualização:** 24/11/2025
 
 
+
